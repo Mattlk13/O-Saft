@@ -33,7 +33,7 @@
 #!# modified by humans (you:) easily.  Please see the documentation  in section
 #!# "Program Code" at the end of this file if you want to improve the program.
 
-# TODO: check if SNI-extension is supported by the server, if 'usesni' is set
+# TODO:  TLSv13: Decrypt and parse also the encrypted extensions.
 
 ## no critic qw(Subroutines::ProhibitSubroutinePrototypes)
 #  NOTE:  Contrary to  Perl::Critic  we consider prototypes as useful, even if
@@ -41,17 +41,37 @@
 #         hints.
 
 ## no critic qw(Variables::ProhibitPackageVars)
-#  NOTE: we have a couple of global variables, but do not want to write them in
-#        all CAPS (as it would be required by Perl::Critic)
+#  NOTE:  we have a couple of global variables, but do not want to write them
+#         in all CAPS (as it would be required by Perl::Critic)
+
+## no critic qw(Subroutines::ProhibitExcessComplexity ControlStructures::ProhibitDeepNests Subroutines::ProhibitManyArgs)
+#  yes, parts of this is is complex
+
+## no critic qw(RegularExpressions::RequireExtendedFormatting)
+#  because we use /x as needed for human readability
 
 package Net::SSLhello;
 
 use strict;
 use warnings;
+
+BEGIN {
+    # section required only when called as: Net/SSLhello.pm or ./SSLhello.pm
+    my $_me   = $0; $_me   =~ s#.*[/\\]##;
+    if ("SSLhello.pm" eq $_me) {
+        my $_path = $0; $_path =~ s#[/\\][^/\\]*$##;
+        unshift(@INC, ".", "./lib", $ENV{PWD}, "/bin");
+        if ($_path !~ m#^[.]/*$#) { # . already added
+            unshift(@INC, "$_path", "$_path/lib") if ($_me ne $_path);
+        }
+        unshift(@INC, "../") if ($0 =~ m#^(?:[.]/)?SSLhello.pm#); # call in Net/
+    }
+}
+
 use constant {  ## no critic qw(ValuesAndExpressions::ProhibitConstantPragma)
-    SSLHELLO_VERSION=> '18.06.03',
+    SSLHELLO_VERSION=> '21.02.21',
     SSLHELLO        => 'O-Saft::Net::SSLhello',
-#   SSLHELLO_SID    => '@(#) SSLhello.pm 1.31 18/07/03 09:16:19',
+#   SSLHELLO_SID    => '@(#) SSLhello.pm 1.42 21/02/24 23:54:04',
 };
 use Socket; ## TBD will be deleted soon TBD ###
 use IO::Socket::INET;
@@ -60,17 +80,15 @@ use Carp;
 use OSaft::error_handler qw (:sslhello_contants);
     # use internal error_handler, get all constants used for SSLHELLO, for subs
     # the full names will be used (includung OSaft::error_handler-><sub>)
-
+use osaft qw(%TLS_EXTENSIONS);
 ######################################################## public documentation #
 
 =pod
 
 =head1 NAME
 
-Net::SSLhello - Perl extension for SSL to simulate SSLhello packets to check
-SSL parameters (especially ciphers).
-Connections via proxy and using STARTTLS (SMTP, IMAP, POP3, FTPS, LDAP, RDP,
-XMPP and experimental: ACAP) are supported.
+Net::SSLhello - Perl module for SSL to simulate SSLhello packets to check SSL parameters (especially ciphers).
+Connections via proxy and using STARTTLS (SMTP, IMAP, POP3, FTPS, LDAP, RDP, XMPP and experimental: ACAP) are supported.
 
 =head1 SYNOPSIS
 
@@ -79,9 +97,9 @@ use Net::SSLhello;
 =head1 DESCRIPTION
 
 SSLhello.pm is a Perl Module that is part of the OWASP-Project 'o-saft'.
-It checks some basic SSL/TLS configuration of a server, like ciphers and extensions (planned) of the SSL/TLS protocol. These checks work independantly from any SSL library like openSSL or gnutls. It does this by simulating the first packets of a SSL/TLS connection. It sends a ClientHello message and analyzes the ServerHello packet that is answered by the server. It gives you a wide range of options for this, so you can even check ciphers that are not yet defined, reserved or obsole, by their 2-octett-values (see http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4).
+It checks some basic SSL/TLS configuration of a server, like ciphers and extensions (planned) of the SSL/TLS protocol. These checks work independently from any SSL library like OpenSSL or gnutls. It does this by simulating the first packets of a SSL/TLS connection. It sends a ClientHello message and analyses the ServerHello packet that is answered by the server. It gives you a wide range of options for this, so you can even check ciphers that are not yet defined, reserved or obsolete, by their 2-octet-values (see http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4).
 
-As it simulates only the first part of the SSL/TLS handshake, it is really fast! Another advantage of this is that it can even analyze SSL/TLS ciphers of servers that verify client certificates without any need to provide one (this is normally done later in the SSL/TLS handshake).
+As it simulates only the first part of the SSL/TLS handshake, it is really fast. Another advantage of this is that it can even analyse SSL/TLS ciphers of servers that verify client certificates without any need to provide a certificate (which is normally done later in the SSL/TLS handshake).
 
 Export Functions:
 $socket = openTcpSSLconnection ($host; $port); # Open a TCP/IP connection to a host on a port (via proxy) and doing STARTTLS if requested
@@ -96,6 +114,8 @@ Net::SSLhello::printCipherStringArray ($cfg{'legacy'}, $host, $port, $ssl, $sni,
 #our %main::cfg;    # provided by caller
 our $dtlsEpoch = 0; # for DTLS only (globally)
 our %_SSLhello;     # our internal data structure
+our %resultHash;    # Hash that collects results
+our %extensions_params_hash; # hasgh that (temporarily) defines parameters for an extension
 our $my_error = ""; # global store for error message
 
 use Exporter qw(import);
@@ -138,7 +158,7 @@ our $HAVE_XS = eval {
 
     } ? 1 : 0;
 
-# All Main Parameters, Constants, Lists and Functions that are used by o-saft andSSLhello
+# All main parameters, constants, lists and functions that are used by o-saft and SSLhello
 use osaft; # TBD add "raw";
 
 use constant {  ## no critic qw(ValuesAndExpressions::ProhibitConstantPragma)
@@ -147,7 +167,7 @@ use constant {  ## no critic qw(ValuesAndExpressions::ProhibitConstantPragma)
     _PROXY_CONNECT_MESSAGE1             => "CONNECT ",
     _PROXY_CONNECT_MESSAGE2             => " HTTP/1.1\n\n",
     _MAX_SEGMENT_COUNT_TO_RESET_RETRY_COUNT => 16, # Max number og TCP-Segments that can reset the retry counter to '0' for next read
-    _SLEEP_B4_2ND_READ                  => 0.5, # Sleep before second read (STARTTLS and proxy) [in sec.x]
+    _SLEEP_B4_2ND_READ                  => 0.5,  # Sleep before second read (STARTTLS and proxy) [in sec.x]
     _DTLS_SLEEP_AFTER_FOUND_A_CIPHER    => 0.75, # DTLS-Protocol: Sleep after found a cipher to segregate the following request [in sec.x]
     _DTLS_SLEEP_AFTER_NO_CIPHERS_FOUND  => 0.05  # DTLS-Protocol: Sleep after not found a cipher to segregate the following request [in sec.x]
 };
@@ -171,7 +191,7 @@ $Net::SSLhello::useecc              = 1;# use 'Supported Elliptic' Curves Extens
 $Net::SSLhello::useecpoint          = 1;# use 'ec_point_formats' extension
 $Net::SSLhello::starttls            = 0;# 1= do STARTTLS
 $Net::SSLhello::starttlsType        = "SMTP";# default: SMTP
-@Net::SSLhello::starttlsPhaseArray  = [];# STARTTLS: customized phases (1-5) and error handling (6-8)
+@Net::SSLhello::starttlsPhaseArray  = [];# STARTTLS: customised phases (1-5) and error handling (6-8)
 $Net::SSLhello::starttlsDelay       = 0;# STARTTLS: time to wait in seconds (to slow down the requests)
 $Net::SSLhello::slowServerDelay     = 0;# proxy and STARTTLS: time to wait in seconds (for slow proxies and STARTTLS servers)
 $Net::SSLhello::double_reneg        = 0;# 0=Protection against double renegotiation info is active
@@ -181,6 +201,9 @@ $Net::SSLhello::experimental        = 0;# 0: experimental functions are protecte
 $Net::SSLhello::max_ciphers         = _MY_SSL3_MAX_CIPHERS; # max nr of ciphers sent in a SSL3/TLS Client-Hello to test if they are supported by the server
 $Net::SSLhello::max_sslHelloLen     = 16388; # according RFC: 16383+5 bytes; max len of sslHello messages (some implementations had issues with packets longer than 256 bytes)
 $Net::SSLhello::noDataEqNoCipher    = 1; # 1= for some TLS intolerant servers 'NoData or timeout equals to no cipher' supported -> Do NOT abort to test next ciphers
+$Net::SSLhello::extensions_by_prot  = \%{$osaft::cfg{extensions_by_prot}}; # get the list of all extensions used by protocol, SSLv2 does not support any extensions by design
+$Net::SSLhello::check_extensions    = [ qw(supported_groups) ]; # List of extensions to be checked for all supported params
+$Net::SSLhello::extensions_max_values = 50; # max retries to check for additional variables of extensions. Acts as watchdog protecting against endless loops while checking for extensions 
 
 my %RECORD_TYPE = ( # RFC 5246
     'change_cipher_spec'    => 20,
@@ -196,7 +219,7 @@ my %HANDSHAKE_TYPE = ( # RFC 5246
     'hello_request'         => 0,
     'client_hello'          => 1,
     'server_hello'          => 2,
-    'hello_verify_request'  => 3, # rfc4347 DTLS
+    'hello_verify_request'  => 3,       # rfc4347 DTLS
     'certificate'           => 11,
     'server_key_exchange'   => 12,
     'certificate_request'   => 13,
@@ -217,14 +240,17 @@ my %PROTOCOL_VERSION = (
     'TLSv12'     => 0x0303, # TLS1.2
     'TLSv13'     => 0x0304, # TLS1.3, not YET specified
     'TLSv1.FF'   => 0x03FF, # Last possible Version of TLS1.x (NOT specified)
-    'DTLSv09'    => 0x0100, # DTLS, OpenSSL pre 0.9.8f, not finally standardized (udp)
+    'DTLSv09'    => 0x0100, # DTLS, OpenSSL pre 0.9.8f, not finally standardised (udp)
     'DTLSfamily' => 0xFE00, # DTLS1.FF, no defined PROTOCOL, for internal usea only (udp)
     'DTLSv1'     => 0xFEFF, # DTLS1.0 (udp)
-    'DTLSv11'    => 0xFEFE, # DTLS1.1: has NEVER been used (udp)
+    'DTLSv11'    => 0xFEFE, # DTLS1.1 (udp), has NEVER been used
     'DTLSv12'    => 0xFEFD, # DTLS1.2 (udp)
-    'DTLSv13'    => 0xFEFC, # DTLS1.3, not YET specified (udp)
+    'DTLSv13'    => 0xFEFC, # DTLS1.3 (udp), not YET specified
     'SCSV'       => 0x03FF  # adapted to o-saft.pl, was TLS1.FF # FIXME: TLS1.FF was better ;-) TBD: change it at o-saft.pl and delete it here
 );
+
+# reverse hash of PROTOCOL_VERSION
+my %PROTOCOL_NAME_BY_HEX = reverse %PROTOCOL_VERSION;
 
 # http://www.iana.org/assignments/tls-parameters/tls-parameters-6.csv
 # Value,Description,DTLS-OK,Reference
@@ -254,12 +280,15 @@ my %TLS_AlertDescription = (
     86 => [qw(inappropriate_fallback  Y  [RFC5246_update-Draft-2014-05-31])], ### added according 'https://datatracker.ietf.org/doc/draft-bmoeller-tls-downgrade-scsv/?include_text=1'
     90 => [qw(user_canceled  Y  [RFC5246])],
     100 => [qw(no_renegotiation  Y  [RFC5246])],
+    109 => [qw(missing_extension Y [RFC8446])],
     110 => [qw(unsupported_extension  Y  [RFC5246])],
     111 => [qw(certificate_unobtainable  Y  [RFC6066])],
     112 => [qw(unrecognized_name  Y  [RFC6066])],
     113 => [qw(bad_certificate_status_response  Y  [RFC6066])],
     114 => [qw(bad_certificate_hash_value  Y  [RFC6066])],
     115 => [qw(unknown_psk_identity  Y  [RFC4279])],
+    116 => [qw(certificate_required  Y   [RFC8446])],
+    120 => [qw(no_application_protocol Y [RFC7301][RFC8447])],
 );
 
 my %ECCURVE_TYPE = ( # RFC 4492
@@ -277,57 +306,113 @@ my %ECCURVE_TYPE = ( # RFC 4492
 );
 
 #http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-10
-#Value =>   Description bits(added) DTLS-OK Reference
+#Value =>     Description   bits(added) DTLS-OK RECOMMENDED Reference
+#my %TLS_SUPPORTED_GROUPS = (
 my %ECC_NAMED_CURVE = (
-     0 => [qw(Unassigned_0        0 N [IANA])],
-     1 => [qw(sect163k1         163 Y [RFC4492])],
-     2 => [qw(sect163r1         163 Y [RFC4492])],
-     3 => [qw(sect163r2         163 Y [RFC4492])],
-     4 => [qw(sect193r1         193 Y [RFC4492])],
-     5 => [qw(sect193r2         193 Y [RFC4492])],
-     6 => [qw(sect233k1         233 Y [RFC4492])],
-     7 => [qw(sect233r1         233 Y [RFC4492])],
-     8 => [qw(sect239k1         239 Y [RFC4492])],
-     9 => [qw(sect283k1         283 Y [RFC4492])],
-    10 => [qw(sect283r1         283 Y [RFC4492])],
-    11 => [qw(sect409k1         409 Y [RFC4492])],
-    12 => [qw(sect409r1         409 Y [RFC4492])],
-    13 => [qw(sect571k1         571 Y [RFC4492])],
-    14 => [qw(sect571r1         571 Y [RFC4492])],
-    15 => [qw(secp160k1         160 Y [RFC4492])],
-    16 => [qw(secp160r1         160 Y [RFC4492])],
-    17 => [qw(secp160r2         160 Y [RFC4492])],
-    18 => [qw(secp192k1         192 Y [RFC4492])],
-    19 => [qw(secp192r1         192 Y [RFC4492])],
-    20 => [qw(secp224k1         224 Y [RFC4492])],
-    21 => [qw(secp224r1         224 Y [RFC4492])],
-    22 => [qw(secp256k1         256 Y [RFC4492])],
-    23 => [qw(secp256r1         256 Y [RFC4492])],
-    24 => [qw(secp384r1         384 Y [RFC4492])],
-    25 => [qw(secp521r1         521 Y [RFC4492])],
-    26 => [qw(brainpoolP256r1   256 Y [RFC7027])],
-    27 => [qw(brainpoolP384r1   384 Y [RFC7027])],
-    28 => [qw(brainpoolP512r1   512 Y [RFC7027])],
-    29 => [qw(ecdh_x25519       255 Y [draft-ietf-tls-tls][draft-ietf-tls-rfc4492bis])], #TEMPORARY-registered_2016-02-29,_expires 2017-03-01,
-    30 => [qw(ecdh_x448         448 Y [draft-ietf-tls-tls][draft-ietf-tls-rfc4492bis])], #TEMPORARY-registered_2016-02-29,_expires 2017-03-01,
-    31 => [qw(eddsa_ed25519     255 Y [https://tools.ietf.org/html/draft-ietf-tls-tls13-11])], # Signature curves, vanished in  https://tools.ietf.org/html/draft-ietf-tls-tls13-12
-    32 => [qw(eddsa_ed448       448 Y [https://tools.ietf.org/html/draft-ietf-tls-tls13-11])], # Signature curves, vanished in  https://tools.ietf.org/html/draft-ietf-tls-tls13-12
-   256 => [qw(ffdhe2048        2048 Y [RFC-ietf-tls-negotiated-ff-dhe-10])],
-   257 => [qw(ffdhe3072        3072 Y [RFC-ietf-tls-negotiated-ff-dhe-10])],
-   258 => [qw(ffdhe4096        4096 Y [RFC-ietf-tls-negotiated-ff-dhe-10])],
-   259 => [qw(ffdhe6144        6144 Y [RFC-ietf-tls-negotiated-ff-dhe-10])],
-   260 => [qw(ffdhe8192        8192 Y [RFC-ietf-tls-negotiated-ff-dhe-10])],
- 65281 => [qw(arbitrary_explicit_prime_curves -variable- Y [RFC4492])],
- 65282 => [qw(arbitrary_explicit_char2_curves -variable- Y [RFC4492])],
+     0 => [qw(Reverved_0              0 N   N   [RFC8447])],
+     1 => [qw(sect163k1             163 Y   N   [RFC4492])],
+     2 => [qw(sect163r1             163 Y   N   [RFC4492])],
+     3 => [qw(sect163r2             163 Y   N   [RFC4492])],
+     4 => [qw(sect193r1             193 Y   N   [RFC4492])],
+     5 => [qw(sect193r2             193 Y   N   [RFC4492])],
+     6 => [qw(sect233k1             233 Y   N   [RFC4492])],
+     7 => [qw(sect233r1             233 Y   N   [RFC4492])],
+     8 => [qw(sect239k1             239 Y   N   [RFC4492])],
+     9 => [qw(sect283k1             283 Y   N   [RFC4492])],
+    10 => [qw(sect283r1             283 Y   N   [RFC4492])],
+    11 => [qw(sect409k1             409 Y   N   [RFC4492])],
+    12 => [qw(sect409r1             409 Y   N   [RFC4492])],
+    13 => [qw(sect571k1             571 Y   N   [RFC4492])],
+    14 => [qw(sect571r1             571 Y   N   [RFC4492])],
+    15 => [qw(secp160k1             160 Y   N   [RFC4492])],
+    16 => [qw(secp160r1             160 Y   N   [RFC4492])],
+    17 => [qw(secp160r2             160 Y   N   [RFC4492])],
+    18 => [qw(secp192k1             192 Y   N   [RFC4492])],
+    19 => [qw(secp192r1             192 Y   N   [RFC4492])],
+    20 => [qw(secp224k1             224 Y   N   [RFC4492])],
+    21 => [qw(secp224r1             224 Y   N   [RFC4492])],
+    22 => [qw(secp256k1             256 Y   N   [RFC4492])],
+    23 => [qw(secp256r1             256 Y   Y   [RFC4492])],
+    24 => [qw(secp384r1             384 Y   Y   [RFC4492])],
+    25 => [qw(secp521r1             521 Y   N   [RFC4492])],
+    26 => [qw(brainpoolP256r1       256 Y   Y   [RFC7027])],
+    27 => [qw(brainpoolP384r1       384 Y   Y   [RFC7027])],
+    28 => [qw(brainpoolP512r1       512 Y   Y   [RFC7027])],
+    29 => [qw(x25519                255 Y   Y   [RFC8446][RFC8422])],
+    30 => [qw(x448                  448 Y   Y   [RFC8446][RFC8422])],
+    31 => [qw(brainpoolP256r1tls13  256 Y   N   [RFC8734])],
+    32 => [qw(brainpoolP384r1tls13  384 Y   N   [RFC8734])],
+    33 => [qw(brainpoolP512r1tls13  512 Y   N   [RFC8734])],
+    34 => [qw(GC256A                256 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    35 => [qw(GC256B                256 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    36 => [qw(GC256C                256 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    37 => [qw(GC256D                256 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    38 => [qw(GC512A                512 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    39 => [qw(GC512B                512 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    40 => [qw(GC512C                512 Y   N   [draft-smyshlyaev-tls12-gost-suites])],
+    41 => [qw(curveSM2              256 N   N   [draft-yang-tls-tls13-sm-suites])],
+#   42-255  Unassigned
+   256 => [qw(ffdhe2048            2048 Y   N   [RFC7919])],
+   257 => [qw(ffdhe3072            3072 Y   N   [RFC7919])],
+   258 => [qw(ffdhe4096            4096 Y   N   [RFC7919])],
+   259 => [qw(ffdhe6144            6144 Y   N   [RFC7919])],
+   260 => [qw(ffdhe8192            8192 Y   N   [RFC7919])],
+#  261-507 Unassigned,
+   508 => [qw(Private_508             NN Y   N   [RFC7919])],
+   509 => [qw(Private_509             NN Y   N   [RFC7919])],
+   510 => [qw(Private_510             NN Y   N   [RFC7919])],
+   511 => [qw(Private_511             NN Y   N   [RFC7919])],
+#  512-2569    Unassigned           ,
+  2570 => [qw(Reserved_2570          NN Y   N   [RFC8701])],
+# 2571-6681    Unassigned           ,
+  6682 => [qw(Reserved_6682          NN Y   N   [RFC8701])],
+# 6683-10793   Unassigned           ,
+ 10794 => [qw(Reserved_10794         NN Y   N   [RFC8701])],
+#10795-14905   Unassigned           ,
+ 14906 => [qw(Reserved_14906         NN Y   N   [RFC8701])],
+#14907-19017   Unassigned           ,
+ 19018 => [qw(Reserved_19018         NN Y   N   [RFC8701])],
+#19019-23129   Unassigned           ,
+ 23130 => [qw(Reserved_23130         NN Y   N   [RFC8701])],
+#23131-27241   Unassigned           ,
+ 27242 => [qw(Reserved_27242         NN Y   N   [RFC8701])],
+#27243-31353   Unassigned           ,
+ 31354 => [qw(Reserved_31354         NN Y   N   [RFC8701])],
+#31355-35465   Unassigned           ,
+ 35466 => [qw(Reserved_35466         NN Y   N   [RFC8701])],
+#35467-39577   Unassigned           ,
+ 39578 => [qw(Reserved_39578         NN Y   N   [RFC8701])],
+#39579-43689   Unassigned           ,
+ 43690 => [qw(Reserved_43690         NN Y   N   [RFC8701])],
+#43691-47801   Unassigned           ,
+ 47802 => [qw(Reserved_47802         NN Y   N   [RFC8701])],
+#47803-51913   Unassigned           ,
+ 51914 => [qw(Reserved_51914         NN Y   N   [RFC8701])],
+#51915-56025   Unassigned           ,
+ 56026 => [qw(Reserved_56026         NN Y   N   [RFC8701])],
+#56027-60137   Unassigned           ,
+ 60138 => [qw(Reserved_60138         NN Y   N   [RFC8701])],
+#60139-64249   Unassigned           ,
+ 64250 => [qw(Reserved_64250         NN Y   N   [RFC8701])],
+#64251-65023   Unassigned           ,
+#65024-65279   Reserved_for_Private_Use NN Y N [RFC8422],
+#65280         Unassigned
+ 65281 => [qw(arbitrary_explicit_prime_curves  -variable- Y    N   [RFC8422])],
+ 65282 => [qw(arbitrary_explicit_char2_curves  -variable- Y    N   [RFC8422])],
+#65283-65535  Unassigned          ,
 );
 
 ##################################################################################
 # List of Functions
 ##################################################################################
-sub checkSSLciphers ($$$@);
-sub printCipherStringArray ($$$$$@);
+sub checkSSLciphers         ($$$@);
+sub printCipherStringArray  ($$$$$@);
 sub _timedOut;
 sub _error;
+sub _compileAllBytes        ($$$$$$;$$);
+sub _decode_val             ($$$;$$$$$$);
+sub _sprintf_hex_val        ($$;$);
+
 
 # TODO: import/export of the trace-function from o-saft-dbx.pm;
 # this is a workaround to get trace running using parameter '$main::cfg{'trace'}'
@@ -336,7 +421,7 @@ sub _error;
 #sub _trace1 {};
 #sub _trace2 {};
 #sub _trace3 {};
-## Print Errors; Debugging
+## Print errors; debugging
 #sub _error    { local $\ = "\n"; print ">>>Net::SSLhello>>> ERROR: " . join(" ", @_); }
 #sub _trace_   { _trace (@_); }
 #sub _trace1_  { _trace1(@_); }
@@ -353,11 +438,13 @@ sub _trace1($) { my @messages = @_; local $\ = ""; print "# " . _y_ts() . SSLHEL
 sub _trace2($) { my @messages = @_; local $\ = ""; print "# --> " . _y_ts() . SSLHELLO . "::" . join(" ", @messages)    if ($main::cfg{'trace'} > 2); return }
 sub _trace3($) { my @messages = @_; local $\ = ""; print "# --> " . _y_ts() . SSLHELLO . "::" . join(" ", @messages)    if ($main::cfg{'trace'} ==3); return }
 sub _trace4($) { my @messages = @_; local $\ = ""; print "#   ---> " . _y_ts() . SSLHELLO . "::" . join(" ", @messages) if ($main::cfg{'trace'} > 3); return }
+sub _trace5($) { my @messages = @_; local $\ = ""; print "#   ---> " . _y_ts() . SSLHELLO . "::" . join(" ", @messages) if ($main::cfg{'trace'} > 4); return }
 sub _trace_($) { my @messages = @_; local $\ = ""; print " " . join(" ", @messages)                                     if ($main::cfg{'trace'} > 0); return }
 sub _trace1_($){ my @messages = @_; local $\ = ""; print " " . join(" ", @messages)                                     if ($main::cfg{'trace'} > 1); return }
 sub _trace2_($){ my @messages = @_; local $\ = ""; print join(" ", @messages)                                           if ($main::cfg{'trace'} > 2); return }
 sub _trace3_($){ my @messages = @_; local $\ = ""; print join(" ", @messages)                                           if ($main::cfg{'trace'} ==3); return }
 sub _trace4_($){ my @messages = @_; local $\ = ""; print join(" ", @messages)                                           if ($main::cfg{'trace'} > 3); return }
+sub _trace5_($){ my @messages = @_; local $\ = ""; print join(" ", @messages)                                           if ($main::cfg{'trace'} > 4); return }
 
 sub _carp   {
     #? print warning message if wanted
@@ -382,7 +469,220 @@ sub _hint   {
 #        push(@INC, $main::mepath);
 #        require "o-saft-dbx.pm";
 #}
-### end trace functions
+
+
+#   trace output for known and unknown formts
+sub _sprintf_hex_val ($$;$) {
+    my $_format         = shift(@_);
+    my $_val_ref        = shift(@_);
+    my $_indent         = shift(@_) || 0;
+    my $_hex_str        = "";
+    my $_format_string  = $_format || "-- undef --";
+
+    _trace5_(" " x $_indent . "#   ---> _sprintf_hex_val: \$_format: '$_format_string' -> ");
+    if (! defined ($_format)) {                                     # guess format, if not defined
+        if (! defined ($_val_ref)) {
+            _trace5 ("-- undefined value --\n");
+            return ("-- undefined value --");
+        }
+        _trace5_ ("if (\$\$_val_ref =~ /\^\\d+\$/); defined (\$\$_val_ref) = " . defined ($$_val_ref) ." -> ");
+        if (! defined ($$_val_ref)) {
+            _trace5_ ("'' (empty value)\n");
+            return ("");
+        }
+        if ($$_val_ref =~ /^\d+$/) {                                # number
+            _trace5_ ("number (auto) -> ");
+            if ($$_val_ref <= 0xFF) {
+                $_format = "%02X";
+            } elsif ($$_val_ref <= 0xFFFF) {
+                $_format = "%04X";
+            } elsif ($$_val_ref <= 0xFFFFFFFF) {
+                $_format = "%08X";
+            } else {                                                # number is too big
+                $_format = "%016X";
+            }
+        } else {                                                    # no number
+            $_format = "";
+        }
+    }
+    if ($_format ne "") {
+        _trace5_ ("formated string: ");
+        $_hex_str = sprintf($_format, $$_val_ref);
+        $_hex_str =~ s/[0-9A-Fa-f]{2}/"$& "/eigx;                   # add a space after 2 Hex vals
+    } else {                                                        # unformated string
+        _trace5_ ("val: unformated string: ");
+        $_hex_str = sprintf("%*v2.2x", ' ', $$_val_ref);
+    }
+    $_hex_str =~ s/\s*$//;                                          # remove white spaces at line ends
+    $_hex_str =~ s/((?:[0-9A-Fa-f]{2}\s){16})(?=[0-9A-Fa-f]{2})/"$&\n"." " x $_indent/eigx; # addd a colon and a space between value and descriptiond a new line each 16 HEX-octetts if last octett has not been reached
+    _trace5_ ("$_hex_str\n");
+    return ($_hex_str);
+}
+
+sub _sprintf_val_description ($$;$$) {
+    my $_def_hash_ref   = shift(@_);
+    my $_val_ref        = shift(@_);
+    my $_indent         = shift(@_) || 0;
+    my $_descr_sep      = shift(@_) || " ";
+    my $_descr_str      = "";
+    my $_text_sep       = ": ";                                     # add a colon and a space between value and description
+    if ($Net::SSLhello::trace >= 5) {                               #               ? value if TRUE                         : value if FALSE
+        my $_val_ref_print      = (defined ($_val_ref))                             ? ref ($_val_ref) . ": "
+                                                                                       . _sprintf_hex_val (undef, $_val_ref, $_indent)
+                                                                                                                            : "-- undef --";
+        my $_def_hash_ref_print = (defined ($_def_hash_ref))                        ? ref ($_def_hash_ref)                  : "-- undef --";
+        if ( (defined ($_def_hash_ref)) && (ref ($_def_hash_ref) eq "HASH") ) {
+            $_def_hash_ref_print   .= ": ->{FORMAT}: ";
+            $_def_hash_ref_print   .= (defined ($_def_hash_ref->{FORMAT}))          ? "defined"                             : "-- undef --";
+            if (defined($_val_ref)) {
+                $_def_hash_ref_print   .= ", ->{$$_val_ref}: ";
+                $_def_hash_ref_print   .= (defined ($_def_hash_ref->{$$_val_ref}))  ? "defined"                             : "-- undef --";
+            }
+        }
+        print " " x $_indent . "#   ---> _sprintf_val_description: (\$_val_ref = <<$_val_ref_print>>, \$_def_hash_ref = <<$_def_hash_ref_print>>)\n";
+    }
+    return ("") if (! defined($_def_hash_ref));
+    return ("") if (! defined($_val_ref));
+    if (ref ($_def_hash_ref) eq "HASH") {                           # $_def_hash_ref is a REF to a HASH
+        # _trace5_ (" " x ($_indent + 3) . "#   ---> _sprintf_val_description: \$_def_hash_ref is a HASH\n");
+        if (defined ($_def_hash_ref->{FORMAT})) {
+            # _trace5_ (" " x ($_indent + 3) . "#   ---> _sprintf_val_description: \$_def_hash_ref->{FORMAT} is defined\n");
+            if (defined ($_def_hash_ref->{$$_val_ref})) {
+                # _trace5_ (" " x ($_indent + 3) . "#   ---> _sprintf_val_description: \$_def_hash_ref->{$$_val_ref} is defined\n");
+                if (ref ($_def_hash_ref->{FORMAT}) eq "ARRAY") {
+                    _trace5_ (" " x $_indent . "#   ---> add ".(@{$_def_hash_ref->{FORMAT}})." description(s)\n");
+                    $_descr_str .= $_text_sep;                      # add a colon and a space between value and description(s)
+                    for (my $_j = 0; $_j < (@{$_def_hash_ref->{FORMAT}}); $_j++) { # all elements of the description array for $$_val_ref
+                        $_descr_str .= $_descr_sep if ($_j >= 1);
+                        _trace5_ (" " x $_indent . "#   ---> \$_descr_str .= sprintf \($_def_hash_ref->{FORMAT}[$_j], $_def_hash_ref->{$$_val_ref}[$_j]\)\n");
+                        $_descr_str .= sprintf ($_def_hash_ref->{FORMAT}[$_j], $_def_hash_ref->{$$_val_ref}[$_j]) if (defined ($_def_hash_ref->{$$_val_ref}[$_j]));
+                    }
+                }
+            }
+        }
+    } elsif (ref ($_def_hash_ref) eq "SCALAR") {                    # $_def_hash_ref is a REF to a SCALAR, e.g. text
+        $_descr_str .= $_text_sep.$$_def_hash_ref;
+    } elsif (ref (\$_def_hash_ref) eq "SCALAR") {                   # $_def_hash_ref is not a REF but a SCALAR, e.g. text
+        $_descr_str .= $_text_sep.$_def_hash_ref;
+    }
+    _trace5_(" " x ($_indent). "# ---> _sprintf_val_description: \$_descr_str = '$_descr_str'\n");
+    return ($_descr_str);
+}
+
+sub _decode_val ($$$;$$$$$$) {
+    #? decodes and (s)sprints values and up to double nested arrays (= arrays of arrays of arrays)
+    #? prints and adds warnings to the output if the variable is even more deeply nestested or in an unsupported format
+    my $_format         = shift(@_);                                # reference to a sprintf-format to print the value, or "" for unformatted strings or undef for autoformat for unknown formats (best effort)
+    my $_val_ref        = shift(@_);                                # reference to a scalar or an up to double nested array (= array of array of array)
+    my $_def_hash_ref   = shift(@_);                                # definition to decode the value: might be a ref to a hash, a ref to this ref or a simple scalara or undef
+    my $_first_indent   = shift(@_) || 0;                           # optional: ident in the first line
+    my $_next_indent    = shift(@_) || 0;                           # optional: ident from the second line onwards
+    my $_text_sep       = shift(@_) || ":\n". " " x $_next_indent;  # optional: add a colon, a new line and an indent between section headline (e.g. 'sequence') and value
+    my $_sub_sep        = shift(@_) || ", ";                        # optional: sub seperators of elements or arrays
+    my $_sub_sub_sep    = shift(@_) || " | ";                       # optional: sub-sub seperators of array elements or nested arrays (arrays of arrays)
+    my $_sub3_sep       = shift(@_) || " / ";                       # optional: sub³ seperators of nested array elements (or error messages for more deeply nested attays 
+    my $_sub_lines      = 0;
+    my $_sub_sub_lines  = 0;
+    my $_sub3_lines     = 0;
+    my $_decode_str     = "";
+    my $_format_print   = $_format;
+    $_format_print      = "-- undef --" if (! defined ($_format));
+
+    _trace5_ (" " x $_next_indent . "# _decode_val (\$_format: '$_format_print', \$val_ref, \$_def_hash_ref, \$_first_indent: '$_first_indent', \$_next_indent: '$_next_indent', \$_text_sep: '$_text_sep', \$_sub_sep: '$_sub_sep', \$_sub_sub_sep: '$_sub_sub_sep', \$_sub3_sep: '$_sub3_sep ')\n");
+    $_decode_str = " " x $_first_indent;
+    if (defined ($_def_hash_ref)) {
+        _trace5_ (" " x ($_next_indent + 2) ."# --->> def_hash-ref-Type:     ".ref($_def_hash_ref)."<<\n");
+        _trace5_ (" " x ($_next_indent + 2) ."# --->> def_hash-ref-ref-Type: ".ref($$_def_hash_ref)."<<\n") if (ref ($_def_hash_ref) eq 'REF');
+        _trace5_ (" " x ($_next_indent + 2) ."# --->> def_hash-val-Type:     ".ref(\$_def_hash_ref)."<<\n");
+        $_def_hash_ref = $$_def_hash_ref if (ref ($_def_hash_ref) eq 'REF');           # reference to a reference => reference
+        if (ref ($_def_hash_ref) eq "HASH") {                       # $_def_hash_ref is a REF to a HASH
+            $_decode_str .= $_def_hash_ref->{TEXT}.$_text_sep if (defined ($_def_hash_ref->{TEXT}));
+        }
+        if (! defined($_val_ref)) {                                 # check for (simple) SCALAR info if any value define (e.g. section headline, e.g. 'sequence'
+            if (ref ($_def_hash_ref) eq "SCALAR") {                 # $_def_hash_ref is a REF to a SCALAR, e.g. text
+                $_decode_str .= $$_def_hash_ref.$_text_sep;
+            } elsif (ref (\$_def_hash_ref) eq "SCALAR") {           # $_def_hash_ref is not a REF but a SCALAR, e.g. text
+                $_decode_str .= $_def_hash_ref.$_text_sep;
+            }
+        }
+        _trace5_ (" " x ($_next_indent + 2) . "# \$_decode_str: $_decode_str\n");
+    }
+    return ($_decode_str) if (! defined($_val_ref));
+    _trace5_ (" " x ($_next_indent + 2) ."# ---> val-Type:     ".ref($_val_ref)."<\n");
+    _trace5_ (" " x ($_next_indent + 2) ."# ---> val-ref-Type: ".ref($$_val_ref)."<\n") if (ref ($_val_ref) eq 'REF');
+    $_val_ref = $$_val_ref if (ref ($_val_ref) eq 'REF');           # reference to a reference => reference
+    if (ref ($_val_ref) eq 'SCALAR') {                              # value
+        $_decode_str .= _sprintf_hex_val         ($_format,       $_val_ref, $_next_indent + 2);
+        $_decode_str .= _sprintf_val_description ($_def_hash_ref, $_val_ref, $_next_indent + 2);
+    } elsif (ref ($_val_ref) eq 'ARRAY') {                          # array
+        $_decode_str .= "[ ";
+        $_next_indent += 2;
+        if ( (@{$_val_ref}) >= 1) {
+            foreach my $ele (@{$_val_ref}) {
+                _trace5_ (" " x ($_next_indent + 2)."# ---|> val-ref-Type (\$ele): ".ref(\$ele)."<|\n");
+                $_decode_str .=  $_sub_sep if ($_sub_lines++ > 0);  # add a sup-sep an a new line with an indent für next nested array;
+                if (ref (\$ele) eq 'SCALAR') {                      # values of the array
+                    $_decode_str .= _sprintf_hex_val         ($_format,       \$ele, $_next_indent + 2);
+                    $_decode_str .= _sprintf_val_description ($_def_hash_ref, \$ele, $_next_indent + 2);
+                } elsif (ref ($ele) eq 'ARRAY') {                   # nested array, e.g. sequence
+                    $_decode_str .=  "[ ";
+                    $_next_indent += 2;
+                    if ( (@{$ele}) >= 1) {
+                        $_sub_sub_lines = 0;                        # reset sub_sub_lines
+                        foreach my $ele_ele (@{$ele}) {
+                            _trace5_ (" " x ($_next_indent + 2)."# ---||> val-ref-Type (\$ele_ele): ".ref(\$ele_ele)."<||\n");
+                            $_decode_str .= $_sub_sub_sep if ($_sub_sub_lines++ > 0);                           # add a sub-sub-separator if not the first element
+                            if (ref (\$ele_ele) eq 'SCALAR') {      # values of the nested array (array of arrays)
+                                $_decode_str .= _sprintf_hex_val         ($_format,       \$ele_ele, $_next_indent + 2);
+                                $_decode_str .= _sprintf_val_description ($_def_hash_ref, \$ele_ele, $_next_indent + 2);
+                            } elsif (ref ($ele_ele) eq 'ARRAY') {   # doulble nested array (array of array of arrays)
+                                $_decode_str .=  "[ ";
+                                $_next_indent += 2;
+                                if ( (@{$ele_ele}) >= 1) {
+                                    $_sub3_lines = 0;               # reset sub_sub_lines
+                                    foreach my $ele3 (@{$ele_ele}) {
+                                        _trace5_ (" " x ($_next_indent + 2)."# --|||> val-ref-Type (\$ele3):    ".ref(\$ele3)."<|||\n");
+                                        $_decode_str .= $_sub3_sep if ($_sub3_lines++ > 0); # add a sub3-separator if not the first element
+                                        if (ref (\$ele3) eq 'SCALAR') { # values of the double nested array (array of array of arrays)
+                                            $_decode_str .= _sprintf_hex_val         ($_format,       \$ele3, $_next_indent + 2);
+                                            $_decode_str .= _sprintf_val_description ($_def_hash_ref, \$ele3, $_next_indent + 2);
+                                        } else {                    # deeply nested array is not supported
+                                            _trace2_ (" " x ($_next_indent + 2) ."# --|||> **WARNING: SSLhello::_decode_val: try to print unsupported or deeply nested val type (\$ele3): '" . ref(\$ele3) ."/". ref($ele3) ."' <|||\n");
+                                            carp ("**WARNING: SSLhello::_decode_val: try to print unsupported or deeply nested val type (\$ele3): '" . ref(\$ele3) ."/". ref($ele3) ."'\n");
+
+                                            $_decode_str .= "[ --- unsupported or deeply nested val type (\$ele3): '". ref(\$ele3) ."/". ref($ele3) ."' --- ]";
+                                        } # ref (\$ele3)
+                                    } # foreach $ele3
+                                }
+                                $_decode_str .= " ]";
+                                $_next_indent -= 2;
+                            } else {                                # unsupported val type of $ele_ele
+                                _trace2_ (" " x ($_next_indent + 2) ."**WARNING: SSLhello::_decode_val: try to print unsupported val-refref-Type (\$ele_ele):    ".ref($ele_ele)."<\n");
+                                carp ("**WARNING: SSLhello::_decode_val: try to print unsupported val type (\$ele_ele): '" . ref(\$ele_ele) ."/". ref($ele_ele) ."'\n");
+                                $_decode_str .= "[ --- unsupported val type (\$ele_ele): '". ref(\$ele_ele) ."/". ref($ele_ele) ."' --- ]";
+                            } # ref (\$ele_ele)
+                        } # foreach $ele_ele
+                    }
+                    $_decode_str .= " ]";
+                    $_next_indent -= 2;
+                } else {                                            # unsupported val type of $ele
+                    _trace2_ (" " x ($_next_indent + 2) ."**WARNING: SSLhello::_decode_val: try to print unsupported val-refref-Type (\$ele):    ".ref($ele)."<\n");
+                    carp ("**WARNING: SSLhello::_decode_val: try to print unsupported val type (\$ele): '" . ref(\$ele) ."/". ref($ele) . "'\n");
+                    $_decode_str .= "[ --- unsupported val type (\$ele_ele): '". ref(\$ele) ."/". ref($ele) ."' --- ]";
+                } # ref (\$ele)
+            } # foreach $ele
+        }
+        $_decode_str .= " ]";
+        $_next_indent -= 2;
+    } else {                                                        # unsupported val type of $$_val_ref
+        _trace2_ (" " x ($_next_indent + 2) ."**WARNING: SSLhello::_decode_val: try to print unsupported val-refref-Type:             " . ref($_val_ref)."<\n");
+        carp ("**WARNING: SSLhello::_decode_val: try to print unsupported val type: '" . ref(\$_val_ref) ."/". ref($_val_ref) ."'\n");
+        $_decode_str .= "[ --- unsupported val type: '". ref(\$_val_ref) ."/". ref($_val_ref) ."' --- ]";
+    } # if ref ($_val_ref)
+#    $_next_indent -= 3;
+    _trace5_ (" " x $_next_indent . "#   ---> _decode_val: \$_decode_str: '$_decode_str'\n");
+    return ($_decode_str);
+} # end of _decode_val ();
 
 ###################################################################################
 
@@ -448,10 +748,10 @@ my %cipherHexHash = (
 #!#----------------------------------------+-------------+--------------------+
   '0x020700C0'=> [qw(DES_192_EDE3_CBC_WITH_MD5                DES-CBC3-MD5)],
   '0x020701C0'=> [qw(DES_192_EDE3_CBC_WITH_SHA                DES-CBC3-SHA)],
-  '0x02060040'=> [qw(DES_64_CBC_WITH_MD5                      DES-CBC-MD5)],
-  '0x02060140'=> [qw(DES_64_CBC_WITH_SHA                      DES-CBC-SHA)],
+  '0x02060040'=> [qw(DES_CBC_WITH_MD5                         DES-CBC-MD5)],
+  '0x02060140'=> [qw(DES_CBC_WITH_SHA                         DES-CBC-SHA)],
   '0x02FF0800'=> [qw(DES_64_CFB64_WITH_MD5_1                  DES-CFB-M1)],
-  '0x02050080'=> [qw(IDEA_128_CBC_WITH_MD5                    IDEA-CBC-MD5)],
+  '0x02050080'=> [qw(IDEA_CBC_WITH_MD5                        IDEA-CBC-MD5)],
   '0x02FF0810'=> [qw(NULL                                     NULL)],
   '0x02000000'=> [qw(NULL_WITH_MD5                            NULL-MD5)],
   '0x02040080'=> [qw(RC2_128_CBC_EXPORT40_WITH_MD5            EXP-RC2-CBC-MD5)],
@@ -465,51 +765,51 @@ my %cipherHexHash = (
 #!#----------------------------------------+-------------+--------------------+
 #!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
 #!#----------------------------------------+-------------+--------------------+
-  '0x0300001B'=> [qw(ADH_WITH_DES_192_CBC3_SHA                ADH-DES-CBC3-SHA)],
-  '0x03000019'=> [qw(ADH_WITH_DES_40_CBC_SHA                  EXP-ADH-DES-CBC-SHA)],
-  '0x0300001A'=> [qw(ADH_WITH_DES_64_CBC_SHA                  ADH-DES-CBC-SHA)],
-  '0x03000018'=> [qw(ADH_WITH_RC4_128_MD5                     ADH-RC4-MD5)],
-  '0x03000017'=> [qw(ADH_WITH_RC4_40_MD5                      EXP-ADH-RC4-MD5)],
-  '0x0300000D'=> [qw(DH_DSS_WITH_DES_192_CBC3_SHA             DH-DSS-DES-CBC3-SHA)],
-  '0x0300000B'=> [qw(DH_DSS_WITH_DES_40_CBC_SHA               EXP-DH-DSS-DES-CBC-SHA)],
-  '0x0300000C'=> [qw(DH_DSS_WITH_DES_64_CBC_SHA               DH-DSS-DES-CBC-SHA)],
-  '0x03000010'=> [qw(DH_RSA_WITH_DES_192_CBC3_SHA             DH-RSA-DES-CBC3-SHA)],
-  '0x0300000E'=> [qw(DH_RSA_WITH_DES_40_CBC_SHA               EXP-DH-RSA-DES-CBC-SHA)],
-  '0x0300000F'=> [qw(DH_RSA_WITH_DES_64_CBC_SHA               DH-RSA-DES-CBC-SHA)],
-  '0x03000013'=> [qw(EDH_DSS_WITH_DES_192_CBC3_SHA            EDH-DSS-DES-CBC3-SHA)],
-  '0x03000011'=> [qw(EDH_DSS_WITH_DES_40_CBC_SHA              EXP-EDH-DSS-DES-CBC-SHA)],
-  '0x03000012'=> [qw(EDH_DSS_WITH_DES_64_CBC_SHA              EDH-DSS-DES-CBC-SHA)],
-  '0x03000016'=> [qw(EDH_RSA_WITH_DES_192_CBC3_SHA            EDH-RSA-DES-CBC3-SHA)],
-  '0x03000014'=> [qw(EDH_RSA_WITH_DES_40_CBC_SHA              EXP-EDH-RSA-DES-CBC-SHA)],
-  '0x03000015'=> [qw(EDH_RSA_WITH_DES_64_CBC_SHA              EDH-RSA-DES-CBC-SHA)],
+  '0x0300001B'=> [qw(DH_anon_WITH_3DES_EDE_CBC_SHA            ADH-DES-CBC3-SHA)],
+  '0x03000019'=> [qw(DH_anon_EXPORT_WITH_DES40_CBC_SHA        EXP-ADH-DES-CBC-SHA)],
+  '0x0300001A'=> [qw(DH_anon_WITH_DES_CBC_SHA                 ADH-DES-CBC-SHA)],
+  '0x03000018'=> [qw(DH_anon_WITH_RC4_128_MD5                 ADH-RC4-MD5)],
+  '0x03000017'=> [qw(DH_anon_EXPORT_WITH_RC4_40_MD5           EXP-ADH-RC4-MD5)],
+  '0x0300000D'=> [qw(DH_DSS_WITH_3DES_EDE_CBC_SHA             DH-DSS-DES-CBC3-SHA)],
+  '0x0300000B'=> [qw(DH_DSS_EXPORT_WITH_DES40_CBC_SHA         EXP-DH-DSS-DES-CBC-SHA)],
+  '0x0300000C'=> [qw(DH_DSS_WITH_DES_CBC_SHA                  DH-DSS-DES-CBC-SHA)],
+  '0x03000010'=> [qw(DH_RSA_WITH_3DES_EDE_CBC_SHA             DH-RSA-DES-CBC3-SHA)],
+  '0x0300000E'=> [qw(DH_RSA_EXPORT_WITH_DES40_CBC_SHA         EXP-DH-RSA-DES-CBC-SHA)],
+  '0x0300000F'=> [qw(DH_RSA_WITH_DES_CBC_SHA                  DH-RSA-DES-CBC-SHA)],
+  '0x03000013'=> [qw(EDH_DSS_WITH_3DES_EDE_CBC_SHA            EDH-DSS-DES-CBC3-SHA)],
+  '0x03000011'=> [qw(EDH_DSS_EXPORT_WITH_DES40_CBC_SHA        EXP-EDH-DSS-DES-CBC-SHA)],
+  '0x03000012'=> [qw(EDH_DSS_WITH_DES_CBC_SHA                 EDH-DSS-DES-CBC-SHA)],
+  '0x03000016'=> [qw(EDH_RSA_WITH_3DES_EDE_CBC_SHA            EDH-RSA-DES-CBC3-SHA)],
+  '0x03000014'=> [qw(EDH_RSA_EXPORT_WITH_DES40_CBC_SHA        EXP-EDH-RSA-DES-CBC-SHA)],
+  '0x03000015'=> [qw(EDH_RSA_WITH_DES_CBC_SHA                 EDH-RSA-DES-CBC-SHA)],
   '0x0300001D'=> [qw(FZA_DMS_FZA_SHA                          FZA-FZA-CBC-SHA)],
   '0x0300001C'=> [qw(FZA_DMS_NULL_SHA                         FZA-NULL-SHA)],
-  '0x0300001E'=> [qw(FZA_DMS_RC4_SHA                          FZA-RC4-SHA)],
-  '0x03000023'=> [qw(KRB5_WITH_DES_192_CBC3_MD5               KRB5-DES-CBC3-MD5)],
-  '0x0300001F'=> [qw(KRB5_WITH_DES_192_CBC3_SHA               KRB5-DES-CBC3-SHA)],
-  '0x03000029'=> [qw(KRB5_WITH_DES_40_CBC_MD5                 EXP-KRB5-DES-CBC-MD5)],
-  '0x03000026'=> [qw(KRB5_WITH_DES_40_CBC_SHA                 EXP-KRB5-DES-CBC-SHA)],
-  '0x03000022'=> [qw(KRB5_WITH_DES_64_CBC_MD5                 KRB5-DES-CBC-MD5)],
-  '0x0300001E'=> [qw(KRB5_WITH_DES_64_CBC_SHA                 KRB5-DES-CBC-SHA)],
-  '0x03000025'=> [qw(KRB5_WITH_IDEA_128_CBC_MD5               KRB5-IDEA-CBC-MD5)],
-  '0x03000021'=> [qw(KRB5_WITH_IDEA_128_CBC_SHA               KRB5-IDEA-CBC-SHA)],
-  '0x0300002A'=> [qw(KRB5_WITH_RC2_40_CBC_MD5                 EXP-KRB5-RC2-CBC-MD5)],
-  '0x03000027'=> [qw(KRB5_WITH_RC2_40_CBC_SHA                 EXP-KRB5-RC2-CBC-SHA)],
+  '0x0300001E'=> [qw(FZA_DMS_RC4_SHA/KRB5_WITH_DES_CBC_SHA    FZA-RC4-SHA/KRB5-DES-SHA)],
+  '0x03000023'=> [qw(KRB5_WITH_3DES_EDE_CBC_MD5               KRB5-DES-CBC3-MD5)],
+  '0x0300001F'=> [qw(KRB5_WITH_3DES_EDE_CBC_SHA               KRB5-DES-CBC3-SHA)],
+  '0x03000029'=> [qw(KRB5_EXPORT_WITH_DES_CBC_40_MD5          EXP-KRB5-DES-CBC-MD5)],
+  '0x03000026'=> [qw(KRB5_EXPORT_WITH_DES_CBC_40_SHA          EXP-KRB5-DES-CBC-SHA)],
+  '0x03000022'=> [qw(KRB5_WITH_DES_CBC_MD5                    KRB5-DES-CBC-MD5)],
+  '0x0300001E'=> [qw(KRB5_WITH_DES_CBC_SHA                    KRB5-DES-CBC-SHA)],
+  '0x03000025'=> [qw(KRB5_WITH_IDEA_CBC_MD5                   KRB5-IDEA-CBC-MD5)],
+  '0x03000021'=> [qw(KRB5_WITH_IDEA_CBC_SHA                   KRB5-IDEA-CBC-SHA)],
+  '0x0300002A'=> [qw(KRB5_WITH_RC2_CBC_40_MD5                 EXP-KRB5-RC2-CBC-MD5)],
+  '0x03000027'=> [qw(KRB5_EXPORT_WITH_RC2_CBC_40_SHA          EXP-KRB5-RC2-CBC-SHA)],
   '0x03000024'=> [qw(KRB5_WITH_RC4_128_MD5                    KRB5-RC4-MD5)],
   '0x03000020'=> [qw(KRB5_WITH_RC4_128_SHA                    KRB5-RC4-SHA)],
-  '0x0300002B'=> [qw(KRB5_WITH_RC4_40_MD5                     EXP-KRB5-RC4-MD5)],
-  '0x03000028'=> [qw(KRB5_WITH_RC4_40_SHA                     EXP-KRB5-RC4-SHA)],
-  '0x0300000A'=> [qw(RSA_WITH_DES_192_CBC3_SHA                DES-CBC3-SHA)],
-  '0x03000008'=> [qw(RSA_WITH_DES_40_CBC_SHA                  EXP-DES-CBC-SHA)],
-  '0x03000009'=> [qw(RSA_WITH_DES_64_CBC_SHA                  DES-CBC-SHA)],
-  '0x03000007'=> [qw(RSA_WITH_IDEA_128_SHA                    IDEA-CBC-SHA)],
+  '0x0300002B'=> [qw(KRB5_EXPORT_WITH_RC4_40_MD5              EXP-KRB5-RC4-MD5)],
+  '0x03000028'=> [qw(KRB5_EXPORT_WITH_RC4_40_SHA              EXP-KRB5-RC4-SHA)],
+  '0x0300000A'=> [qw(RSA_WITH_3DES_EDE_CBC_SHA                DES-CBC3-SHA)],
+  '0x03000008'=> [qw(RSA_EXPORT_WITH_DES40_CBC_SHA            EXP-DES-CBC-SHA)],
+  '0x03000009'=> [qw(RSA_WITH_DES_CBC_SHA                     DES-CBC-SHA)],
+  '0x03000007'=> [qw(RSA_WITH_IDEA_SHA                        IDEA-CBC-SHA)],
   '0x03000000'=> [qw(NULL_WITH_NULL_NULL                      NULL-NULL)],
   '0x03000001'=> [qw(RSA_WITH_NULL_MD5                        NULL-MD5)],
   '0x03000002'=> [qw(RSA_WITH_NULL_SHA                        NULL-SHA)],
-  '0x03000006'=> [qw(RSA_WITH_RC2_40_MD5                      EXP-RC2-CBC-MD5)],
+  '0x03000006'=> [qw(RSA_EXPORT_WITH_RC2_CBC_40_MD5           EXP-RC2-CBC-MD5)],
   '0x03000004'=> [qw(RSA_WITH_RC4_128_MD5                     RC4-MD5)],
   '0x03000005'=> [qw(RSA_WITH_RC4_128_SHA                     RC4-SHA)],
-  '0x03000003'=> [qw(RSA_WITH_RC4_40_MD5                      EXP-RC4-MD5)],
+  '0x03000003'=> [qw(RSA_EXPORT_WITH_RC4_40_MD5               EXP-RC4-MD5)],
   '0x030000FF'=> [qw(EMPTY_RENEGOTIATION_INFO_SCSV            SCSV-RENEG)], #activated 'Signaling Cipher Suite Value'
   '0x03005600'=> [qw(FALLBACK_SCSV_DRAFT                      SCSV-FALLBACK-DRAFT)], ### added according 'https://datatracker.ietf.org/doc/draft-bmoeller-tls-downgrade-scsv/?include_text=1'
 
@@ -518,93 +818,93 @@ my %cipherHexHash = (
 #!#----------------------------------------+-------------+--------------------+
 #!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
 #!#----------------------------------------+-------------+--------------------+
-  '0x030000A6'=> [qw(ADH_WITH_AES_128_GCM_SHA256              ADH-AES128-GCM-SHA256)],
-  '0x03000034'=> [qw(ADH_WITH_AES_128_SHA                     ADH-AES128-SHA)],
-  '0x0300006C'=> [qw(ADH_WITH_AES_128_SHA256                  ADH-AES128-SHA256)],
-  '0x030000A7'=> [qw(ADH_WITH_AES_256_GCM_SHA384              ADH-AES256-GCM-SHA384)],
-  '0x0300003A'=> [qw(ADH_WITH_AES_256_SHA                     ADH-AES256-SHA)],
-  '0x0300006D'=> [qw(ADH_WITH_AES_256_SHA256                  ADH-AES256-SHA256)],
-  '0x03000046'=> [qw(ADH_WITH_CAMELLIA_128_CBC_SHA            ADH-CAMELLIA128-SHA)],
-  '0x03000089'=> [qw(ADH_WITH_CAMELLIA_256_CBC_SHA            ADH-CAMELLIA256-SHA)],
-  '0x0300009B'=> [qw(ADH_WITH_SEED_SHA                        ADH-SEED-SHA)],
+  '0x030000A6'=> [qw(DH_anon_WITH_AES_128_GCM_SHA256          ADH-AES128-GCM-SHA256)],
+  '0x03000034'=> [qw(DH_anon_WITH_AES_128_CBC_SHA             ADH-AES128-SHA)],
+  '0x0300006C'=> [qw(DH_anon_WITH_AES_128_CBC_SHA256          ADH-AES128-SHA256)],
+  '0x030000A7'=> [qw(DH_anon_WITH_AES_256_GCM_SHA384          ADH-AES256-GCM-SHA384)],
+  '0x0300003A'=> [qw(DH_anon_WITH_AES_256_CBC_SHA             ADH-AES256-SHA)],
+  '0x0300006D'=> [qw(DH_anon_WITH_AES_256_CBC_SHA256          ADH-AES256-SHA256)],
+  '0x03000046'=> [qw(DH_anon_WITH_CAMELLIA_128_CBC_SHA        ADH-CAMELLIA128-SHA)],
+  '0x03000089'=> [qw(DH_anon_WITH_CAMELLIA_256_CBC_SHA        ADH-CAMELLIA256-SHA)],
+  '0x0300009B'=> [qw(DH_anon_WITH_SEED_CBC_SHA                ADH-SEED-SHA)],
   '0x03000063'=> [qw(DHE_DSS_EXPORT1024_WITH_DES_CBC_SHA      EXP1024-DHE-DSS-DES-CBC-SHA)],
   '0x03000065'=> [qw(DHE_DSS_EXPORT1024_WITH_RC4_56_SHA       EXP1024-DHE-DSS-RC4-SHA)],
   '0x030000A2'=> [qw(DHE_DSS_WITH_AES_128_GCM_SHA256          DHE-DSS-AES128-GCM-SHA256)],
-  '0x03000032'=> [qw(DHE_DSS_WITH_AES_128_SHA                 DHE-DSS-AES128-SHA)],
-  '0x03000040'=> [qw(DHE_DSS_WITH_AES_128_SHA256              DHE-DSS-AES128-SHA256)],
+  '0x03000032'=> [qw(DHE_DSS_WITH_AES_128_CBC_SHA             DHE-DSS-AES128-SHA)],
+  '0x03000040'=> [qw(DHE_DSS_WITH_AES_128_CBC_SHA256          DHE-DSS-AES128-SHA256)],
   '0x030000A3'=> [qw(DHE_DSS_WITH_AES_256_GCM_SHA384          DHE-DSS-AES256-GCM-SHA384)],
-  '0x03000038'=> [qw(DHE_DSS_WITH_AES_256_SHA                 DHE-DSS-AES256-SHA)],
-  '0x0300006A'=> [qw(DHE_DSS_WITH_AES_256_SHA256              DHE-DSS-AES256-SHA256)],
+  '0x03000038'=> [qw(DHE_DSS_WITH_AES_256_CBC_SHA             DHE-DSS-AES256-SHA)],
+  '0x0300006A'=> [qw(DHE_DSS_WITH_AES_256_CBC_SHA256          DHE-DSS-AES256-SHA256)],
   '0x03000044'=> [qw(DHE_DSS_WITH_CAMELLIA_128_CBC_SHA        DHE-DSS-CAMELLIA128-SHA)],
   '0x03000087'=> [qw(DHE_DSS_WITH_CAMELLIA_256_CBC_SHA        DHE-DSS-CAMELLIA256-SHA)],
   '0x03000066'=> [qw(DHE_DSS_WITH_RC4_128_SHA                 DHE-DSS-RC4-SHA)],
-  '0x03000099'=> [qw(DHE_DSS_WITH_SEED_SHA                    DHE-DSS-SEED-SHA)],
+  '0x03000099'=> [qw(DHE_DSS_WITH_SEED_CBC_SHA                DHE-DSS-SEED-SHA)],
   '0x0300009E'=> [qw(DHE_RSA_WITH_AES_128_GCM_SHA256          DHE-RSA-AES128-GCM-SHA256)],
-  '0x03000033'=> [qw(DHE_RSA_WITH_AES_128_SHA                 DHE-RSA-AES128-SHA)],
-  '0x03000067'=> [qw(DHE_RSA_WITH_AES_128_SHA256              DHE-RSA-AES128-SHA256)],
+  '0x03000033'=> [qw(DHE_RSA_WITH_AES_128_CBC_SHA             DHE-RSA-AES128-SHA)],
+  '0x03000067'=> [qw(DHE_RSA_WITH_AES_128_CBC_SHA256          DHE-RSA-AES128-SHA256)],
   '0x0300009F'=> [qw(DHE_RSA_WITH_AES_256_GCM_SHA384          DHE-RSA-AES256-GCM-SHA384)],
-  '0x03000039'=> [qw(DHE_RSA_WITH_AES_256_SHA                 DHE-RSA-AES256-SHA)],
-  '0x0300006B'=> [qw(DHE_RSA_WITH_AES_256_SHA256              DHE-RSA-AES256-SHA256)],
+  '0x03000039'=> [qw(DHE_RSA_WITH_AES_256_CBC_SHA             DHE-RSA-AES256-SHA)],
+  '0x0300006B'=> [qw(DHE_RSA_WITH_AES_256_CBC_SHA256          DHE-RSA-AES256-SHA256)],
   '0x03000045'=> [qw(DHE_RSA_WITH_CAMELLIA_128_CBC_SHA        DHE-RSA-CAMELLIA128-SHA)],
   '0x03000088'=> [qw(DHE_RSA_WITH_CAMELLIA_256_CBC_SHA        DHE-RSA-CAMELLIA256-SHA)],
-  '0x0300009A'=> [qw(DHE_RSA_WITH_SEED_SHA                    DHE-RSA-SEED-SHA)],
+  '0x0300009A'=> [qw(DHE_RSA_WITH_SEED_CBC_SHA                DHE-RSA-SEED-SHA)],
   '0x030000A4'=> [qw(DH_DSS_WITH_AES_128_GCM_SHA256           DH-DSS-AES128-GCM-SHA256)],
-  '0x03000030'=> [qw(DH_DSS_WITH_AES_128_SHA                  DH-DSS-AES128-SHA)],
-  '0x0300003E'=> [qw(DH_DSS_WITH_AES_128_SHA256               DH-DSS-AES128-SHA256)],
+  '0x03000030'=> [qw(DH_DSS_WITH_AES_128_CBC_SHA              DH-DSS-AES128-SHA)],
+  '0x0300003E'=> [qw(DH_DSS_WITH_AES_128_CBC_SHA256           DH-DSS-AES128-SHA256)],
   '0x030000A5'=> [qw(DH_DSS_WITH_AES_256_GCM_SHA384           DH-DSS-AES256-GCM-SHA384)],
-  '0x03000036'=> [qw(DH_DSS_WITH_AES_256_SHA                  DH-DSS-AES256-SHA)],
-  '0x03000068'=> [qw(DH_DSS_WITH_AES_256_SHA256               DH-DSS-AES256-SHA256)],
+  '0x03000036'=> [qw(DH_DSS_WITH_AES_256_CBC_SHA              DH-DSS-AES256-SHA)],
+  '0x03000068'=> [qw(DH_DSS_WITH_AES_256_CBC_SHA256           DH-DSS-AES256-SHA256)],
   '0x03000042'=> [qw(DH_DSS_WITH_CAMELLIA_128_CBC_SHA         DH-DSS-CAMELLIA128-SHA)],
   '0x03000085'=> [qw(DH_DSS_WITH_CAMELLIA_256_CBC_SHA         DH-DSS-CAMELLIA256-SHA)],
-  '0x03000097'=> [qw(DH_DSS_WITH_SEED_SHA                     DH-DSS-SEED-SHA)],
+  '0x03000097'=> [qw(DH_DSS_WITH_SEED_CBC_SHA                 DH-DSS-SEED-SHA)],
   '0x030000A0'=> [qw(DH_RSA_WITH_AES_128_GCM_SHA256           DH-RSA-AES128-GCM-SHA256)],
-  '0x03000031'=> [qw(DH_RSA_WITH_AES_128_SHA                  DH-RSA-AES128-SHA)],
-  '0x0300003F'=> [qw(DH_RSA_WITH_AES_128_SHA256               DH-RSA-AES128-SHA256)],
+  '0x03000031'=> [qw(DH_RSA_WITH_AES_128_CBC_SHA              DH-RSA-AES128-SHA)],
+  '0x0300003F'=> [qw(DH_RSA_WITH_AES_128_CBC_SHA256           DH-RSA-AES128-SHA256)],
   '0x030000A1'=> [qw(DH_RSA_WITH_AES_256_GCM_SHA384           DH-RSA-AES256-GCM-SHA384)],
-  '0x03000037'=> [qw(DH_RSA_WITH_AES_256_SHA                  DH-RSA-AES256-SHA)],
-  '0x03000069'=> [qw(DH_RSA_WITH_AES_256_SHA256               DH-RSA-AES256-SHA256)],
+  '0x03000037'=> [qw(DH_RSA_WITH_AES_256_CBC_SHA              DH-RSA-AES256-SHA)],
+  '0x03000069'=> [qw(DH_RSA_WITH_AES_256_CBC_SHA256           DH-RSA-AES256-SHA256)],
   '0x03000043'=> [qw(DH_RSA_WITH_CAMELLIA_128_CBC_SHA         DH-RSA-CAMELLIA128-SHA)],
   '0x03000086'=> [qw(DH_RSA_WITH_CAMELLIA_256_CBC_SHA         DH-RSA-CAMELLIA256-SHA)],
-  '0x03000098'=> [qw(DH_RSA_WITH_SEED_SHA                     DH-RSA-SEED-SHA)],
+  '0x03000098'=> [qw(DH_RSA_WITH_SEED_CBC_SHA                 DH-RSA-SEED-SHA)],
   '0x0300C009'=> [qw(ECDHE_ECDSA_WITH_AES_128_CBC_SHA         ECDHE-ECDSA-AES128-SHA)],
   '0x0300C02B'=> [qw(ECDHE_ECDSA_WITH_AES_128_GCM_SHA256      ECDHE-ECDSA-AES128-GCM-SHA256)],
-  '0x0300C023'=> [qw(ECDHE_ECDSA_WITH_AES_128_SHA256          ECDHE-ECDSA-AES128-SHA256)],
+  '0x0300C023'=> [qw(ECDHE_ECDSA_WITH_AES_128_CBC_SHA256      ECDHE-ECDSA-AES128-SHA256)],
   '0x0300C00A'=> [qw(ECDHE_ECDSA_WITH_AES_256_CBC_SHA         ECDHE-ECDSA-AES256-SHA)],
   '0x0300C02C'=> [qw(ECDHE_ECDSA_WITH_AES_256_GCM_SHA384      ECDHE-ECDSA-AES256-GCM-SHA384)],
-  '0x0300C024'=> [qw(ECDHE_ECDSA_WITH_AES_256_SHA384          ECDHE-ECDSA-AES256-SHA384)],
-  '0x0300C008'=> [qw(ECDHE_ECDSA_WITH_DES_192_CBC3_SHA        ECDHE-ECDSA-DES-CBC3-SHA)],
+  '0x0300C024'=> [qw(ECDHE_ECDSA_WITH_AES_256_CBC_SHA384      ECDHE-ECDSA-AES256-SHA384)],
+  '0x0300C008'=> [qw(ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA        ECDHE-ECDSA-DES-CBC3-SHA)],
   '0x0300C006'=> [qw(ECDHE_ECDSA_WITH_NULL_SHA                ECDHE-ECDSA-NULL-SHA)],
   '0x0300C007'=> [qw(ECDHE_ECDSA_WITH_RC4_128_SHA             ECDHE-ECDSA-RC4-SHA)],
   '0x0300C013'=> [qw(ECDHE_RSA_WITH_AES_128_CBC_SHA           ECDHE-RSA-AES128-SHA)],
   '0x0300C02F'=> [qw(ECDHE_RSA_WITH_AES_128_GCM_SHA256        ECDHE-RSA-AES128-GCM-SHA256)],
-  '0x0300C027'=> [qw(ECDHE_RSA_WITH_AES_128_SHA256            ECDHE-RSA-AES128-SHA256)],
+  '0x0300C027'=> [qw(ECDHE_RSA_WITH_AES_128_CBC_SHA256        ECDHE-RSA-AES128-SHA256)],
   '0x0300C014'=> [qw(ECDHE_RSA_WITH_AES_256_CBC_SHA           ECDHE-RSA-AES256-SHA)],
   '0x0300C030'=> [qw(ECDHE_RSA_WITH_AES_256_GCM_SHA384        ECDHE-RSA-AES256-GCM-SHA384)],
-  '0x0300C028'=> [qw(ECDHE_RSA_WITH_AES_256_SHA384            ECDHE-RSA-AES256-SHA384)],
-  '0x0300C012'=> [qw(ECDHE_RSA_WITH_DES_192_CBC3_SHA          ECDHE-RSA-DES-CBC3-SHA)],
+  '0x0300C028'=> [qw(ECDHE_RSA_WITH_AES_256_CBC_SHA384        ECDHE-RSA-AES256-SHA384)],
+  '0x0300C012'=> [qw(ECDHE_RSA_WITH_3DES_EDE_CBC_SHA          ECDHE-RSA-DES-CBC3-SHA)],
   '0x0300C010'=> [qw(ECDHE_RSA_WITH_NULL_SHA                  ECDHE-RSA-NULL-SHA)],
   '0x0300C011'=> [qw(ECDHE_RSA_WITH_RC4_128_SHA               ECDHE-RSA-RC4-SHA)],
   '0x0300C004'=> [qw(ECDH_ECDSA_WITH_AES_128_CBC_SHA          ECDH-ECDSA-AES128-SHA)],
   '0x0300C02D'=> [qw(ECDH_ECDSA_WITH_AES_128_GCM_SHA256       ECDH-ECDSA-AES128-GCM-SHA256)],
-  '0x0300C025'=> [qw(ECDH_ECDSA_WITH_AES_128_SHA256           ECDH-ECDSA-AES128-SHA256)],
+  '0x0300C025'=> [qw(ECDH_ECDSA_WITH_AES_128_CBC_SHA256       ECDH-ECDSA-AES128-SHA256)],
   '0x0300C005'=> [qw(ECDH_ECDSA_WITH_AES_256_CBC_SHA          ECDH-ECDSA-AES256-SHA)],
   '0x0300C02E'=> [qw(ECDH_ECDSA_WITH_AES_256_GCM_SHA384       ECDH-ECDSA-AES256-GCM-SHA384)],
-  '0x0300C026'=> [qw(ECDH_ECDSA_WITH_AES_256_SHA384           ECDH-ECDSA-AES256-SHA384)],
-  '0x0300C003'=> [qw(ECDH_ECDSA_WITH_DES_192_CBC3_SHA         ECDH-ECDSA-DES-CBC3-SHA)],
+  '0x0300C026'=> [qw(ECDH_ECDSA_WITH_AES_256_CBC_SHA384       ECDH-ECDSA-AES256-SHA384)],
+  '0x0300C003'=> [qw(ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA         ECDH-ECDSA-DES-CBC3-SHA)],
   '0x0300C001'=> [qw(ECDH_ECDSA_WITH_NULL_SHA                 ECDH-ECDSA-NULL-SHA)],
   '0x0300C002'=> [qw(ECDH_ECDSA_WITH_RC4_128_SHA              ECDH-ECDSA-RC4-SHA)],
   '0x0300C00E'=> [qw(ECDH_RSA_WITH_AES_128_CBC_SHA            ECDH-RSA-AES128-SHA)],
   '0x0300C031'=> [qw(ECDH_RSA_WITH_AES_128_GCM_SHA256         ECDH-RSA-AES128-GCM-SHA256)],
-  '0x0300C029'=> [qw(ECDH_RSA_WITH_AES_128_SHA256             ECDH-RSA-AES128-SHA256)],
+  '0x0300C029'=> [qw(ECDH_RSA_WITH_AES_128_CBC_SHA256         ECDH-RSA-AES128-SHA256)],
   '0x0300C00F'=> [qw(ECDH_RSA_WITH_AES_256_CBC_SHA            ECDH-RSA-AES256-SHA)],
   '0x0300C032'=> [qw(ECDH_RSA_WITH_AES_256_GCM_SHA384         ECDH-RSA-AES256-GCM-SHA384)],
-  '0x0300C02A'=> [qw(ECDH_RSA_WITH_AES_256_SHA384             ECDH-RSA-AES256-SHA384)],
-  '0x0300C00D'=> [qw(ECDH_RSA_WITH_DES_192_CBC3_SHA           ECDH-RSA-DES-CBC3-SHA)],
+  '0x0300C02A'=> [qw(ECDH_RSA_WITH_AES_256_CBC_SHA384         ECDH-RSA-AES256-SHA384)],
+  '0x0300C00D'=> [qw(ECDH_RSA_WITH_3DES_EDE_CBC_SHA           ECDH-RSA-DES-CBC3-SHA)],
   '0x0300C00B'=> [qw(ECDH_RSA_WITH_NULL_SHA                   ECDH-RSA-NULL-SHA)],
   '0x0300C00C'=> [qw(ECDH_RSA_WITH_RC4_128_SHA                ECDH-RSA-RC4-SHA)],
   '0x0300C018'=> [qw(ECDH_anon_WITH_AES_128_CBC_SHA           AECDH-AES128-SHA)],
   '0x0300C019'=> [qw(ECDH_anon_WITH_AES_256_CBC_SHA           AECDH-AES256-SHA)],
-  '0x0300C017'=> [qw(ECDH_anon_WITH_DES_192_CBC3_SHA          AECDH-DES-CBC3-SHA)],
+  '0x0300C017'=> [qw(ECDH_anon_WITH_3DES_EDE_CBC_SHA          AECDH-DES-CBC3-SHA)],
   '0x0300C015'=> [qw(ECDH_anon_WITH_NULL_SHA                  AECDH-NULL-SHA)],
   '0x0300C016'=> [qw(ECDH_anon_WITH_RC4_128_SHA               AECDH-RC4-SHA)],
   '0x0300008B'=> [qw(PSK_WITH_3DES_EDE_CBC_SHA                PSK-3DES-EDE-CBC-SHA)],
@@ -616,15 +916,15 @@ my %cipherHexHash = (
   '0x03000060'=> [qw(RSA_EXPORT1024_WITH_RC4_56_MD5           EXP1024-RC4-MD5)],
   '0x03000064'=> [qw(RSA_EXPORT1024_WITH_RC4_56_SHA           EXP1024-RC4-SHA)],
   '0x0300009C'=> [qw(RSA_WITH_AES_128_GCM_SHA256              AES128-GCM-SHA256)],
-  '0x0300002F'=> [qw(RSA_WITH_AES_128_SHA                     AES128-SHA)],
-  '0x0300003C'=> [qw(RSA_WITH_AES_128_SHA256                  AES128-SHA256)],
+  '0x0300002F'=> [qw(RSA_WITH_AES_128_CBC_SHA                 AES128-SHA)],
+  '0x0300003C'=> [qw(RSA_WITH_AES_128_CBC_SHA256              AES128-SHA256)],
   '0x0300009D'=> [qw(RSA_WITH_AES_256_GCM_SHA384              AES256-GCM-SHA384)],
-  '0x03000035'=> [qw(RSA_WITH_AES_256_SHA                     AES256-SHA)],
-  '0x0300003D'=> [qw(RSA_WITH_AES_256_SHA256                  AES256-SHA256)],
+  '0x03000035'=> [qw(RSA_WITH_AES_256_CBC_SHA                 AES256-SHA)],
+  '0x0300003D'=> [qw(RSA_WITH_AES_256_CBC_SHA256              AES256-SHA256)],
   '0x03000041'=> [qw(RSA_WITH_CAMELLIA_128_CBC_SHA            CAMELLIA128-SHA)],
   '0x03000084'=> [qw(RSA_WITH_CAMELLIA_256_CBC_SHA            CAMELLIA256-SHA)],
   '0x0300003B'=> [qw(RSA_WITH_NULL_SHA256                     NULL-SHA256)],
-  '0x03000096'=> [qw(RSA_WITH_SEED_SHA                        SEED-SHA)],
+  '0x03000096'=> [qw(RSA_WITH_SEED_CBC_SHA                    SEED-SHA)],
   '0x0300C01C'=> [qw(SRP_SHA_DSS_WITH_3DES_EDE_CBC_SHA        SRP-DSS-3DES-EDE-CBC-SHA)],
   '0x0300C01F'=> [qw(SRP_SHA_DSS_WITH_AES_128_CBC_SHA         SRP-DSS-AES-128-CBC-SHA)],
   '0x0300C022'=> [qw(SRP_SHA_DSS_WITH_AES_256_CBC_SHA         SRP-DSS-AES-256-CBC-SHA)],
@@ -737,7 +1037,7 @@ my %cipherHexHash = (
   '0x030000BC'=> [qw(DH_RSA_WITH_CAMELLIA_128_CBC_SHA256  DH-RSA-CAMELLIA128-SHA256)],
   '0x030000BD'=> [qw(DHE_DSS_WITH_CAMELLIA_128_CBC_SHA256 DHE-DSS-CAMELLIA128-SHA256)],
   '0x030000BE'=> [qw(DHE_RSA_WITH_CAMELLIA_128_CBC_SHA256 DHE-RSA-CAMELLIA128-SHA256)],
-  '0x030000BF'=> [qw(ADH_WITH_CAMELLIA_128_CBC_SHA256     ADH-CAMELLIA128-SHA256)],
+  '0x030000BF'=> [qw(DH_anon_WITH_CAMELLIA_128_CBC_SHA256 ADH-CAMELLIA128-SHA256)],
 
 
 # CipherSuite TLS_RSA_WITH_CAMELLIA_256_CBC_SHA256      = { 0x00,0xC0 };
@@ -751,7 +1051,7 @@ my %cipherHexHash = (
   '0x030000C2'=> [qw(DH_RSA_WITH_CAMELLIA_256_CBC_SHA256  DH-RSA-CAMELLIA256-SHA256)],
   '0x030000C3'=> [qw(DHE_DSS_WITH_CAMELLIA_256_CBC_SHA256 DHE-DSS-CAMELLIA256-SHA256)],
   '0x030000C4'=> [qw(DHE_RSA_WITH_CAMELLIA_256_CBC_SHA256 DHE-RSA-CAMELLIA256-SHA256)],
-  '0x030000C5'=> [qw(ADH_WITH_CAMELLIA_256_CBC_SHA256     ADH-CAMELLIA256-SHA256)],
+  '0x030000C5'=> [qw(DH_anon_WITH_CAMELLIA_256_CBC_SHA256 ADH-CAMELLIA256-SHA256)],
 
 #!#----------------------------------------+-------------+--------------------+
 #!# Protocol:  http://tools.ietf.org/html/rfcrfc6367
@@ -799,8 +1099,8 @@ my %cipherHexHash = (
   '0x0300C081'=> [qw(DHE_DSS_WITH_CAMELLIA_256_GCM_SHA384       DHE-DSS-CAMELLIA256-GCM-SHA384)],
   '0x0300C082'=> [qw(DH_DSS_WITH_CAMELLIA_128_GCM_SHA256        DH-DSS-CAMELLIA128-GCM-SHA256)],
   '0x0300C083'=> [qw(DH_DSS_WITH_CAMELLIA_256_GCM_SHA384        DH-DSS-CAMELLIA256-GCM-SHA384)],
-  '0x0300C084'=> [qw(ADH_DSS_WITH_CAMELLIA_128_GCM_SHA256       ADH-DSS-CAMELLIA128-GCM-SHA256)],
-  '0x0300C085'=> [qw(ADH_DSS_WITH_CAMELLIA_256_GCM_SHA384       ADH-DSS-CAMELLIA256-GCM-SHA384)],
+  '0x0300C084'=> [qw(DH_anon_DSS_WITH_CAMELLIA_128_GCM_SHA256   ADH-DSS-CAMELLIA128-GCM-SHA256)],
+  '0x0300C085'=> [qw(DH_anon_DSS_WITH_CAMELLIA_256_GCM_SHA384   ADH-DSS-CAMELLIA256-GCM-SHA384)],
 
 # CipherSuite TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256  = {0xC0,0x86};
 # CipherSuite TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384  = {0xC0,0x87};
@@ -1077,6 +1377,67 @@ my %cipherHexHash = (
    '0x0300C071'=>[qw(ECDHE_PSK_WITH_ARIA_256_CBC_SHA384    ECDHE-PSK-ARIA256-SHA384)],
 
 #!#----------------------------------------+-------------+--------------------+
+#!# Protocol: TLS 1.3 ciphers (prefix TLS13 added)
+#!# added manually 20201106
+#!# RFC8446
+#!#----------------------------------------+-------------+--------------------+
+#!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
+#!#----------------------------------------+-------------+--------------------+
+   '0x03001301'=>[qw(TLS13_AES_128_GCM_SHA256              TLS13-AES128-GCM-SHA256)],
+   '0x03001302'=>[qw(TLS13_AES_256_GCM_SHA384              TLS13-AES256-GCM-SHA384)],
+   '0x03001303'=>[qw(TLS13_CHACHA20_POLY1305_SHA256        TLS13-CHACHA20-POLY1305-SHA256)],
+   '0x03001304'=>[qw(TLS13_AES_128_CCM_SHA256              TLS13-AES128-CCM-SHA256)],
+   '0x03001305'=>[qw(TLS13_AES_128_CCM_8_SHA256            TLS13-AES128-CCM-8-SHA256)],
+
+#!#----------------------------------------+-------------+--------------------+
+#!# Protocol: some further TLS 1.3 ciphers (prefix TLS13 added)
+#!# added manually 20201106
+#!# DRAFT yang-tls-tls13-sm-suites; OpenSSL-Names are expected (TBD: verify names later)
+#!#----------------------------------------+-------------+--------------------+
+#!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
+#!#----------------------------------------+-------------+--------------------+
+   '0x030000C6'=>[qw(TLS13_SM4_GCM_SM3                     TLS13-SM4-CGM)],
+   '0x030000C7'=>[qw(TLS13_SM4_CCM_SM3                     TLS13-SM4-CCM)],
+
+#!#----------------------------------------+-------------+--------------------+
+#!# Protocol: DRAFT for GOST cipher suites (TLS 1.2 and TLS 1.3 (prefix TLS13 added)
+#!# added manually 20201109
+#!# DRAFT draft-smyshlyaev-tls12-gost-suites; OpenSSL-Names are expected (TBD: verify names later)
+#!#----------------------------------------+-------------+--------------------+
+#!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
+#!#----------------------------------------+-------------+--------------------+
+   '0x0300C100'=>[qw(GOSTR341112_256_WITH_KUZNYECHIK_CTR_OMAC    GOSTR341112-256-KUZNYECHIK-CTR-OMAC)],
+   '0x0300C101'=>[qw(GOSTR341112_256_WITH_MAGMA_CTR_OMAC         GOSTR341112-256-MAGMA-CTR-OMAC)],
+   '0x0300C102'=>[qw(GOSTR341112_256_WITH_28147_CNT_IMIT         GOSTR341112-256-28147-CNT-IMIT)],
+   '0x0300C103'=>[qw(TLS13_GOSTR341112_256_WITH_KUZNYECHIK_MGM_L GOSTR341112-256-KUZNYECHIK-MGM-L)],
+   '0x0300C104'=>[qw(TLS13_GOSTR341112_256_WITH_MAGMA_MGM_L      GOSTR341112-256-MAGMA-MGM-L)],
+   '0x0300C105'=>[qw(TLS13_GOSTR341112_256_WITH_KUZNYECHIK_MGM_S GOSTR341112-256-KUZNYECHIK-MGM-S)],
+   '0x0300C106'=>[qw(TLS13_GOSTR341112_256_WITH_MAGMA_MGM_S      GOSTR341112-256-MAGMA-MGM-S)],
+
+#!# Protocol: some further TLS 1.3 ciphers (prefix TLS13 added)
+#!# added manually 20201106
+#!# DRAFT draft-camwinget-tls-ts13-macciphersuites; OpenSSL-Names are expected (TBD: verify names later)
+#!#----------------------------------------+-------------+--------------------+
+#!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
+#!#----------------------------------------+-------------+--------------------+
+   '0x0300C4B4'=>[qw(TLS13_SHA256_SHA256                   TLS13-SHA256-SHA256)],
+   '0x0300C4B5'=>[qw(TLS13_SHA384_SHA384                   TLS13-SHA384-SHA384)],
+
+#!#----------------------------------------+-------------+--------------------+
+#!# Protocol: RFC8442 PSK cipher suites (TLS 1.2)
+#!# added manually 20201109
+#!# RFC8442 OpenSSL-Names are expected (TBD: verify names later)
+#!#----------------------------------------+-------------+--------------------+
+#!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
+#!#----------------------------------------+-------------+--------------------+
+   '0x0300D001'=>[qw(ECDHE_PSK_WITH_AES_128_GCM_SHA256     ECDHE_PSK_WITH_AES_128_GCM_SHA256)],
+   '0x0300D002'=>[qw(ECDHE_PSK_WITH_AES_256_GCM_SHA384     ECDHE_PSK_WITH_AES_256_GCM_SHA384)],
+   '0x0300D003'=>[qw(ECDHE_PSK_WITH_AES_128_CCM_8_SHA256   ECDHE_PSK_WITH_AES_128_CCM_8_SHA256)],
+   '0x0300D005'=>[qw(ECDHE_PSK_WITH_AES_128_CCM_SHA256     ECDHE_PSK_WITH_AES_128_CCM_SHA256)],
+
+#!#----------------------------------------+-------------+--------------------+
+#!# and more ....
+#!#----------------------------------------+-------------+--------------------+
 ); # cipherHexHash
 
 #################################################################
@@ -1088,10 +1449,10 @@ my $TLS_SERVER_HELLO    = 2;
 my %SSL2_CIPHER_STRINGS = (
   '0x020700C0'=> [qw(DES_192_EDE3_CBC_WITH_MD5                DES-CBC3-MD5       SSL_CK_DES_192_EDE3_CBC_WITH_MD5)],
   '0x020701C0'=> [qw(DES_192_EDE3_CBC_WITH_SHA                DES-CBC3-SHA)],
-  '0x02060040'=> [qw(DES_64_CBC_WITH_MD5                      DES-CBC-MD5        SSL_CK_DES_64_CBC_WITH_MD5)],
-  '0x02060140'=> [qw(DES_64_CBC_WITH_SHA                      DES-CBC-SHA)],
+  '0x02060040'=> [qw(DES_CBC_WITH_MD5                         DES-CBC-MD5        SSL_CK_DES_64_CBC_WITH_MD5)],
+  '0x02060140'=> [qw(DES_CBC_WITH_SHA                         DES-CBC-SHA)],
   '0x02FF0800'=> [qw(DES_64_CFB64_WITH_MD5_1                  DES-CFB-M1)],
-  '0x02050080'=> [qw(IDEA_128_CBC_WITH_MD5                    IDEA-CBC-MD5       SSL_CK_IDEA_128_CBC_WITH_MD5)],
+  '0x02050080'=> [qw(IDEA_CBC_WITH_MD5                        IDEA-CBC-MD5       SSL_CK_IDEA_128_CBC_WITH_MD5)],
   '0x02FF0810'=> [qw(NULL                                     NULL)],
   '0x02000000'=> [qw(NULL_WITH_MD5                            NULL-MD5)],
   '0x02040080'=> [qw(RC2_128_CBC_EXPORT40_WITH_MD5            EXP-RC2-CBC-MD5    SSL_CK_RC2_128_CBC_EXPORT40_WITH_MD5)],
@@ -1104,105 +1465,174 @@ my %SSL2_CIPHER_STRINGS = (
 #!#----------------------------------------+-------------+--------------------+
 #!# cipher suite hex value => [ cipher_name1 cipher_name2 ],
 #!#----------------------------------------+-------------+--------------------+
-  '0x0300001B'=> [qw(ADH_WITH_DES_192_CBC_SHA                 ADH-DES-CBC3-SHA)],
-  '0x03000019'=> [qw(ADH_WITH_DES_40_CBC_SHA                  EXP-ADH-DES-CBC-SHA)],
-  '0x0300001A'=> [qw(ADH_WITH_DES_64_CBC_SHA                  ADH-DES-CBC-SHA)],
-  '0x03000018'=> [qw(ADH_WITH_RC4_128_MD5                     ADH-RC4-MD5)],
-  '0x03000017'=> [qw(ADH_WITH_RC4_40_MD5                      EXP-ADH-RC4-MD5)],
-  '0x0300000D'=> [qw(DH_DSS_WITH_DES_192_CBC3_SHA             DH-DSS-DES-CBC3-SHA)],
-  '0x0300000B'=> [qw(DH_DSS_WITH_DES_40_CBC_SHA               EXP-DH-DSS-DES-CBC-SHA)],
-  '0x0300000C'=> [qw(DH_DSS_WITH_DES_64_CBC_SHA               DH-DSS-DES-CBC-SHA)],
-  '0x03000010'=> [qw(DH_RSA_WITH_DES_192_CBC3_SHA             DH-RSA-DES-CBC3-SHA)],
-  '0x0300000E'=> [qw(DH_RSA_WITH_DES_40_CBC_SHA               EXP-DH-RSA-DES-CBC-SHA)],
-  '0x0300000F'=> [qw(DH_RSA_WITH_DES_64_CBC_SHA               DH-RSA-DES-CBC-SHA)],
-  '0x03000013'=> [qw(EDH_DSS_WITH_DES_192_CBC3_SHA            EDH-DSS-DES-CBC3-SHA)],
-  '0x03000011'=> [qw(EDH_DSS_WITH_DES_40_CBC_SHA              EXP-EDH-DSS-DES-CBC-SHA)],
-  '0x03000012'=> [qw(EDH_DSS_WITH_DES_64_CBC_SHA              EDH-DSS-DES-CBC-SHA)],
-  '0x03000016'=> [qw(EDH_RSA_WITH_DES_192_CBC3_SHA            EDH-RSA-DES-CBC3-SHA)],
-  '0x03000014'=> [qw(EDH_RSA_WITH_DES_40_CBC_SHA              EXP-EDH-RSA-DES-CBC-SHA)],
-  '0x03000015'=> [qw(EDH_RSA_WITH_DES_64_CBC_SHA              EDH-RSA-DES-CBC-SHA)],
-  '0x0300001D'=> [qw(FZA_DMS_FZA_SHA                          FZA-FZA-CBC-SHA)],
-  '0x0300001C'=> [qw(FZA_DMS_NULL_SHA                         FZA-NULL-SHA)],
-#  '0x0300001E'=> [qw(FZA_DMS_RC4_SHA                          FZA-RC4-SHA)], #doppelt => prüfen
-  '0x03000023'=> [qw(KRB5_WITH_DES_192_CBC3_MD5               KRB5-DES-CBC3-MD5)],
-  '0x0300001F'=> [qw(KRB5_WITH_DES_192_CBC3_SHA               KRB5-DES-CBC3-SHA)],
-  '0x03000029'=> [qw(KRB5_WITH_DES_40_CBC_MD5                 EXP-KRB5-DES-CBC-MD5)],
-  '0x03000026'=> [qw(KRB5_WITH_DES_40_CBC_SHA                 EXP-KRB5-DES-CBC-SHA)],
-  '0x03000022'=> [qw(KRB5_WITH_DES_64_CBC_MD5                 KRB5-DES-CBC-MD5)],
-  '0x0300001E'=> [qw(KRB5_WITH_DES_64_CBC_SHA                 KRB5-DES-CBC-SHA)],
-  '0x03000025'=> [qw(KRB5_WITH_IDEA_128_CBC_MD5               KRB5-IDEA-CBC-MD5)],
-  '0x03000021'=> [qw(KRB5_WITH_IDEA_128_CBC_SHA               KRB5-IDEA-CBC-SHA)],
-  '0x0300002A'=> [qw(KRB5_WITH_RC2_40_CBC_MD5                 EXP-KRB5-RC2-CBC-MD5)],
-  '0x03000027'=> [qw(KRB5_WITH_RC2_40_CBC_SHA                 EXP-KRB5-RC2-CBC-SHA)],
-  '0x03000024'=> [qw(KRB5_WITH_RC4_128_MD5                    KRB5-RC4-MD5)],
-  '0x03000020'=> [qw(KRB5_WITH_RC4_128_SHA                    KRB5-RC4-SHA)],
-  '0x0300002B'=> [qw(KRB5_WITH_RC4_40_MD5                     EXP-KRB5-RC4-MD5)],
-  '0x03000028'=> [qw(KRB5_WITH_RC4_40_SHA                     EXP-KRB5-RC4-SHA)],
-  '0x0300000A'=> [qw(RSA_WITH_DES_192_CBC3_SHA                DES-CBC3-SHA)],
-  '0x03000008'=> [qw(RSA_WITH_DES_40_CBC_SHA                  EXP-DES-CBC-SHA)],
-  '0x03000009'=> [qw(RSA_WITH_DES_64_CBC_SHA                  DES-CBC-SHA)],
-  '0x03000007'=> [qw(RSA_WITH_IDEA_128_SHA                    IDEA-CBC-SHA)],
-  '0x03000000'=> [qw(NULL_WITH_NULL_NULL                      NULL-NULL)],
-  '0x03000001'=> [qw(RSA_WITH_NULL_MD5                        NULL-MD5)],
+  '0x0300001B'=> [qw(DH_anon_WITH_DES_192_CBC_SHA                 ADH-DES-CBC3-SHA)],
+  '0x03000019'=> [qw(DH_anon_EXPORT_WITH_DES40_CBC_SHA            EXP-ADH-DES-CBC-SHA)],
+  '0x0300001A'=> [qw(DH_anon_WITH_DES_CBC_SHA                     ADH-DES-CBC-SHA)],
+  '0x03000018'=> [qw(DH_anon_WITH_RC4_128_MD5                     ADH-RC4-MD5)],
+  '0x03000017'=> [qw(DH_anon_WITH_RC4_40_MD5                      EXP-ADH-RC4-MD5)],
+  '0x0300000D'=> [qw(DH_DSS_WITH_3DES_EDE_CBC_SHA                 DH-DSS-DES-CBC3-SHA)],
+  '0x0300000B'=> [qw(DH_DSS_EXPORT_WITH_DES40_CBC_SHA             EXP-DH-DSS-DES-CBC-SHA)],
+  '0x0300000C'=> [qw(DH_DSS_WITH_DES_CBC_SHA                      DH-DSS-DES-CBC-SHA)],
+  '0x03000010'=> [qw(DH_RSA_WITH_3DES_EDE_CBC_SHA                 DH-RSA-DES-CBC3-SHA)],
+  '0x0300000E'=> [qw(DH_RSA_EXPORT_WITH_DES40_CBC_SHA             EXP-DH-RSA-DES-CBC-SHA)],
+  '0x0300000F'=> [qw(DH_RSA_WITH_DES_CBC_SHA                      DH-RSA-DES-CBC-SHA)],
+  '0x03000013'=> [qw(EDH_DSS_WITH_3DES_EDE_CBC_SHA                EDH-DSS-DES-CBC3-SHA)],
+  '0x03000011'=> [qw(EDH_DSS_EXPORT_WITH_DES40_CBC_SHA            EXP-EDH-DSS-DES-CBC-SHA)],
+  '0x03000012'=> [qw(EDH_DSS_WITH_DES_CBC_SHA                     EDH-DSS-DES-CBC-SHA)],
+  '0x03000016'=> [qw(EDH_RSA_WITH_3DES_EDE_CBC_SHA                EDH-RSA-DES-CBC3-SHA)],
+  '0x03000014'=> [qw(EDH_RSA_EXPORT_WITH_DES40_CBC_SHA            EXP-EDH-RSA-DES-CBC-SHA)],
+  '0x03000015'=> [qw(EDH_RSA_WITH_DES_CBC_SHA                     EDH-RSA-DES-CBC-SHA)],
+  '0x0300001D'=> [qw(FZA_DMS_FZA_SHA                              FZA-FZA-CBC-SHA)],
+  '0x0300001C'=> [qw(FZA_DMS_NULL_SHA                             FZA-NULL-SHA)],
+#  '0x0300001E'=> [qw(FZA_DMS_RC4_SHA                             FZA-RC4-SHA)], #doppelt => prüfen
+  '0x03000023'=> [qw(KRB5_WITH_3DES_EDE_CBC_MD5                   KRB5-DES-CBC3-MD5)],
+  '0x0300001F'=> [qw(KRB5_WITH_3DES_EDE_CBC_SHA                   KRB5-DES-CBC3-SHA)],
+  '0x03000029'=> [qw(KRB5_EXPORT_WITH_DES40_CBC_MD5               EXP-KRB5-DES-CBC-MD5)],
+  '0x03000026'=> [qw(KRB5_EXPORT_WITH_DES40_CBC_SHA               EXP-KRB5-DES-CBC-SHA)],
+  '0x03000022'=> [qw(KRB5_WITH_DES_CBC_MD5                        KRB5-DES-CBC-MD5)],
+  '0x0300001E'=> [qw(KRB5_WITH_DES_CBC_SHA                        KRB5-DES-CBC-SHA)],
+  '0x03000025'=> [qw(KRB5_WITH_IDEA_CBC_MD5                       KRB5-IDEA-CBC-MD5)],
+  '0x03000021'=> [qw(KRB5_WITH_IDEA_CBC_SHA                       KRB5-IDEA-CBC-SHA)],
+  '0x0300002A'=> [qw(KRB5_WITH_RC2_40_CBC_MD5                     EXP-KRB5-RC2-CBC-MD5)],
+  '0x03000027'=> [qw(KRB5_WITH_RC2_40_CBC_SHA                     EXP-KRB5-RC2-CBC-SHA)],
+  '0x03000024'=> [qw(KRB5_WITH_RC4_128_MD5                        KRB5-RC4-MD5)],
+  '0x03000020'=> [qw(KRB5_WITH_RC4_128_SHA                        KRB5-RC4-SHA)],
+  '0x0300002B'=> [qw(KRB5_WITH_RC4_40_MD5                         EXP-KRB5-RC4-MD5)],
+  '0x03000028'=> [qw(KRB5_WITH_RC4_40_SHA                         EXP-KRB5-RC4-SHA)],
+  '0x0300000A'=> [qw(RSA_WITH_3DES_EDE_CBC_SHA                    DES-CBC3-SHA)],
+  '0x03000008'=> [qw(RSA_EXPORT_WITH_DES40_CBC_SHA                EXP-DES-CBC-SHA)],
+  '0x03000009'=> [qw(RSA_WITH_DES_CBC_SHA                         DES-CBC-SHA)],
+  '0x03000007'=> [qw(RSA_WITH_IDEA_SHA                            IDEA-CBC-SHA)],
+  '0x03000000'=> [qw(NULL_WITH_NULL_NULL                          NULL-NULL)],
+  '0x03000001'=> [qw(RSA_WITH_NULL_MD5                            NULL-MD5)],
   '0x03000002'=> [qw(RSA_WITH_NULL_SHA                        NULL-SHA)],
   '0x030000FF'=> [qw(EMPTY_RENEGOTIATION_INFO_SCSV            SCSV-RENEG)],
 );
 
+#_____________________________________________________________________________
+#__________________________________________________ help and test functions __|
 
-#############################################################################################
-############################################################################################
 sub version { # version of SSLhello
     #? prints the official version number of SSLhello (yy-mm-dd)
 
     local $\ = ""; # no auto '\n' at the end of the line
     print "NET::SSLhello        ($VERSION)\n";
     return;
-}
+} # version
+
+sub __print { return sprintf("%s%s\n", "#SSLHello: ", @_); }
+sub _yprint { return __print(sprintf("%21s=%s", $_[0], $_[1])); }
+
+sub printConstants {
+    #? prints the global constants
+    #
+    local $\ = ""; # no auto '\n' at the end of the line
+    my $line = "#--------------------+-------------------------------------------";
+    print ("#O-Saft::Net::SSLhello::Constants:\n");
+    print __print($line);
+    print ("#O-Saft::osaft::TLS_EXTENSIONS:\n");
+    foreach my $key (sort {lc $a cmp lc $b} keys %osaft::TLS_EXTENSIONS) {
+        print "TLS_EXTENSIONS\{$key\}:\n";
+        print "    \{ID\}          \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{ID}))            { print "$osaft::TLS_EXTENSIONS{$key}{ID}\n";               }
+        print "    \{CH\}          \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{CH}))            { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{CH}})         { print "$val, "; } } print "\n";
+#        print "    \{CH_TEXT\}     \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{CH_TEXT}))       { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{CH_TEXT}})    { print "$val, "; } } print "\n";
+        print "    \{RX\}          \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{RX}))            { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{RX}})         { print "$val, "; } } print "\n";
+#        print "    \{RX_TEXT\}     \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{RX_TEXT}))       { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{RX_TEXT}})    { print "$val, "; } } print "\n";
+        print "    \{RECOMMENDED\} \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{RECOMMENDED}))   { print "$osaft::TLS_EXTENSIONS{$key}{RECOMMENDED}\n";      }
+        print "    \{TLS13\}       \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{TLS13}))         { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{TLS13}})      { print "$val, "; } } print "\n";
+        print "    \{RFC\}         \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{RFC}))           { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{RFC}})        { print "$val, "; } } print "\n";
+        print "    \{DEFAULT\}     \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{DEFAULT}))       { foreach my $val (@{$osaft::TLS_EXTENSIONS{$key}{DEFAULT}}){
+                                                                                                                my $__first_indent = 0;
+                                                                                                                _trace2_ (", \n" . " " x $__first_indent) if ($__first_indent > 0); # add a newline if not the first line
+                                                                                                                my $__decode_str = _decode_val (undef, \$val, \%osaft::TLS_EXTENSIONS{$key}, $__first_indent, 20, ": ", ", ", " | ", " / ");
+
+                                                                                                                _trace5_ (" " x 20) if ($__first_indent < 1);
+                                                                                                                print $__decode_str;
+                                                                                                                $__first_indent = 20;
+                                                                                                                                                                                      } } print "\n";
+        print "    \{CHECK\}       \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{CHECK}))         { print "$osaft::TLS_EXTENSIONS{$key}{CHECK}\n";            }
+        print "    \{COMMENT\}     \= "; if (defined ($osaft::TLS_EXTENSIONS{$key}{COMMENT}))       { print "$osaft::TLS_EXTENSIONS{$key}{COMMENT}\n";          }
+        print "\n";
+    }
+    print __print($line);
+    print "\n";
+} # printConstants
 
 sub printParameters {
     #? prints the global parameters
     #
     local $\ = ""; # no auto '\n' at the end of the line
+    my $line = "#--------------------+-------------------------------------------";
     print ("#O-Saft::Net::SSLhello::Parameters:\n");
-    print ("#SSLHello:                 retry=$Net::SSLhello::retry\n")              if (defined($Net::SSLhello::retry));
-    print ("#SSLHello:               timeout=$Net::SSLhello::timeout\n")            if (defined($Net::SSLhello::timeout));
-    print ("#SSLHello:         connect_delay=$Net::SSLhello::connect_delay\n")      if (defined($Net::SSLhello::connect_delay));
-    print ("#SSLHello:                 trace=$Net::SSLhello::trace\n")              if (defined($Net::SSLhello::trace));
-    print ("#SSLHello:             traceTIME=$Net::SSLhello::traceTIME\n")          if (defined($Net::SSLhello::traceTIME));
-    print ("#SSLHello:              usereneg=$Net::SSLhello::usereneg\n")           if (defined($Net::SSLhello::usereneg));
-    print ("#SSLHello:          double_reneg=$Net::SSLhello::double_reneg\n")       if (defined($Net::SSLhello::double_reneg));
-    print ("#SSLHello:                usesni=$Net::SSLhello::usesni\n")             if (defined($Net::SSLhello::usesni));
-    print ("#SSLHello:          use_sni_name=$Net::SSLhello::use_sni_name\n")       if (defined($Net::SSLhello::use_sni_name));
-    print ("#SSLHello:              sni_name=$Net::SSLhello::sni_name\n")           if (defined($Net::SSLhello::sni_name));
-    print ("#SSLHello:     use_signature_alg=$Net::SSLhello::use_signature_alg\n")  if (defined($Net::SSLhello::use_signature_alg));
-    print ("#SSLHello:                useecc=$Net::SSLhello::useecc\n")             if (defined($Net::SSLhello::useecc));
-    print ("#SSLHello:            useecpoint=$Net::SSLhello::useecpoint\n")         if (defined($Net::SSLhello::useecpoint));
-    print ("#SSLHello:              starttls=$Net::SSLhello::starttls\n")           if (defined($Net::SSLhello::starttls));
-    print ("#SSLHello:          starttlsType=$Net::SSLhello::starttlsType\n")       if (defined($Net::SSLhello::starttlsType));
+    print __print($line);
+    print _yprint("retry",           $Net::SSLhello::retry)           if (defined($Net::SSLhello::retry));
+    print _yprint("timeout",         $Net::SSLhello::timeout)         if (defined($Net::SSLhello::timeout));
+    print _yprint("timeout",         $Net::SSLhello::timeout)         if (defined($Net::SSLhello::timeout));
+    print _yprint("connect_delay",   $Net::SSLhello::connect_delay)   if (defined($Net::SSLhello::connect_delay));
+    print _yprint("trace",           $Net::SSLhello::trace)           if (defined($Net::SSLhello::trace));
+    print _yprint("traceTIME",       $Net::SSLhello::traceTIME)       if (defined($Net::SSLhello::traceTIME));
+    print _yprint("usereneg",        $Net::SSLhello::usereneg)        if (defined($Net::SSLhello::usereneg));
+    print _yprint("double_reneg",    $Net::SSLhello::double_reneg)    if (defined($Net::SSLhello::double_reneg));
+    print _yprint("usesni",          $Net::SSLhello::usesni)          if (defined($Net::SSLhello::usesni));
+    print _yprint("use_sni_name",    $Net::SSLhello::use_sni_name)    if (defined($Net::SSLhello::use_sni_name));
+    print _yprint("sni_name",        $Net::SSLhello::sni_name)        if (defined($Net::SSLhello::sni_name));
+    print _yprint("use_signature_alg", $Net::SSLhello::use_signature_alg)  if (defined($Net::SSLhello::use_signature_alg));
+    print _yprint("useecc",          $Net::SSLhello::useecc)          if (defined($Net::SSLhello::useecc));
+    print _yprint("useecpoint",      $Net::SSLhello::useecpoint)      if (defined($Net::SSLhello::useecpoint));
+    if (%{$Net::SSLhello::extensions_by_prot}) {
+            print "#SSLHello: extensions_by_prot:\n";
+        foreach my $_prot (sort keys %{$Net::SSLhello::extensions_by_prot}) {
+            print _yprint("->{$_prot}", join(", ",@{$Net::SSLhello::extensions_by_prot->{$_prot}})) if defined($Net::SSLhello::extensions_by_prot->{$_prot});
+        }
+    }
+    print _yprint("check_extensions",       join(", ",@{$Net::SSLhello::check_extensions})) if (defined($Net::SSLhello::check_extensions));
+    print _yprint("extensions_max_values",  $Net::SSLhello::extensions_max_values) if (defined($Net::SSLhello::extensions_max_values));
+    print _yprint("starttls",        $Net::SSLhello::starttls)        if (defined($Net::SSLhello::starttls));
+    print _yprint("starttlsType",    $Net::SSLhello::starttlsType)    if (defined($Net::SSLhello::starttlsType));
     for my $i (1..5) {
-        print ("#SSLHello: starttlsPhaseArray[$i]=$Net::SSLhello::starttlsPhaseArray[$i]\n")   if (defined($Net::SSLhello::starttlsPhaseArray[$i]));
+        print _yprint("starttlsPhaseArray[$i]", $Net::SSLhello::starttlsPhaseArray[$i])   if (defined($Net::SSLhello::starttlsPhaseArray[$i]));
     }
     for my $i (6..8) {
-        print ("#SSLHello: starttlsErrorArray[".($i-5)."]=$Net::SSLhello::starttlsPhaseArray[$i] = starttlsPhaseArray[$i] (internally)\n")   if (defined($Net::SSLhello::starttlsPhaseArray[$i]));
+        print _yprint("starttlsErrorArray[".($i-5)."]", $Net::SSLhello::starttlsPhaseArray[$i] . " = starttlsPhaseArray[$i] (internally)")   if (defined($Net::SSLhello::starttlsPhaseArray[$i]));
     }
-    print ("#SSLHello:         starttlsDelay=$Net::SSLhello::starttlsDelay\n")      if (defined($Net::SSLhello::starttlsDelay));
-    print ("#SSLHello:       slowServerDelay=$Net::SSLhello::slowServerDelay\n")    if (defined($Net::SSLhello::slowServerDelay));
-    print ("#SSLHello:          experimental=$Net::SSLhello::experimental\n")       if (defined($Net::SSLhello::experimental));
-    print ("#SSLHello:             proxyhost=$Net::SSLhello::proxyhost\n")          if (defined($Net::SSLhello::proxyhost));
-    print ("#SSLHello:             proxyport=$Net::SSLhello::proxyport\n")          if (defined($Net::SSLhello::proxyport));
-    print ("#SSLHello:           max_ciphers=$Net::SSLhello::max_ciphers\n")        if (defined($Net::SSLhello::max_ciphers));
-    print ("#SSLHello:       max_sslHelloLen=$Net::SSLhello::max_sslHelloLen\n")    if (defined($Net::SSLhello::max_sslHelloLen));
-    print ("#------------------------------------------------------------------------------------------\n");
+    print _yprint("starttlsDelay",   $Net::SSLhello::starttlsDelay)   if (defined($Net::SSLhello::starttlsDelay));
+    print _yprint("slowServerDelay", $Net::SSLhello::slowServerDelay) if (defined($Net::SSLhello::slowServerDelay));
+    print _yprint("experimental",    $Net::SSLhello::experimental)    if (defined($Net::SSLhello::experimental));
+    print _yprint("proxyhost",       $Net::SSLhello::proxyhost)       if (defined($Net::SSLhello::proxyhost));
+    print _yprint("proxyport",       $Net::SSLhello::proxyport)       if (defined($Net::SSLhello::proxyport));
+    print _yprint("max_ciphers",     $Net::SSLhello::max_ciphers)     if (defined($Net::SSLhello::max_ciphers));
+    print _yprint("max_sslHelloLen", $Net::SSLhello::max_sslHelloLen) if (defined($Net::SSLhello::max_sslHelloLen));
+    print ("\n#O-Saft::Net::SSLhello: information about the OS and some socket constants and functions.\n");
+    print __print($line);
+    print _yprint("OS",                  $^O)                         if (defined($^O));
+    my $_pf_inet =                                      PF_INET;
+    print _yprint("socket::PF"."_INET",  $_pf_inet);
+    my $_af_inet =                                      AF_INET;
+    print _yprint("socket::AF"."_INET",  $_af_inet);
+    my $_sock_stream =  (defined(SOCK_STREAM))        ? SOCK_STREAM   : "--undef --";
+    print _yprint("socket::SOCK_STREAM", $_sock_stream);
+    my $_sol_socket =   (defined(SOL_SOCKET))         ? SOL_SOCKET    : "--undef --";
+    print _yprint("socket::SOL_SOCKET",  $_sol_socket);
+    my $_so_sndtimeo = (defined(SO_SNDTIMEO))         ? SO_SNDTIMEO   : "--undef --";
+    print _yprint("socket::SO_SNDTIMEO", $_so_sndtimeo);
+    my $_so_rcvtimeo = (defined(SO_RCVTIMEO))         ? SO_RCVTIMEO   : "--undef --";
+    print _yprint("socket::SO_RCVTIMEO", $_so_rcvtimeo);
+    my ($_dummy1, $_dummy2, $_protocol) = getprotobyname('tcp'); # is failsafer than '(getprotobyname('tcp'))[2]'
+        if (! $_protocol) { 
+            $_protocol = Socket::IPPROTO_TCP;
+        }
+    print _yprint("socket::getprotobyname('tcp')", $_protocol);
+    print __print($line);
     return;
-}
+} # printParameters
 
 ### --------------------------------------------------------------------------------------------------------- ###
 ### compile packets functions
 ### ---------------------------------------------------------------------------------------------------------
 ### Aufruf mit printCipherStringArray ($cfg{'legacy'}, $host, $port, "TLS1.2 0x0303", $cfg{'usesni'}, @acceptedCipherArray);
 sub printCipherStringArray ($$$$$@) {
-    #? FIXME: <<description missing>>
-    # @cipherArray: string representation of the cipher octetts, fe.g. 0x0300000A
+    #? <<description missing>> # FIXME:
+    # @cipherArray: string representation of the cipher octets, e.g. 0x0300000A
     # The first two ciphers are identical, if the server has a preferred order
     #
 
@@ -1218,13 +1648,15 @@ sub printCipherStringArray ($$$$$@) {
     my $cipherOrder = ""; # cipher suites in server-preferred order or not
     my $sni     = "";
     my $sep     = ", ";
+    my $sep_sep = " | ";
     my $protocol = $PROTOCOL_VERSION{$ssl}; # 0x0002, 0x3000, 0x0301, 0x0302
+    my $cipher  = "";
     local $\    = ""; # no auto '\n' at the end of the line
 
     _trace4 ("printCipherStringArray: {\n");
-
+    $legacy = "csv" if ($legacy eq "compact");                      # backward compatibility: old 'compact' style => new 'csv' style
     if ($usesni) {
-        $sni = "SNI"; #tbd: check in serverHello if SNI is supported by the server
+        $sni = "SNI";
         $Net::SSLhello::use_sni_name = 1 if ( ($Net::SSLhello::use_sni_name == 0) && ($Net::SSLhello::sni_name) && ($Net::SSLhello::sni_name ne "1") ); ###FIX: quickfix until migration of o-saft.pl is compleated (tbd)
         $sni .= " ($Net::SSLhello::sni_name)" if ( ($Net::SSLhello::use_sni_name) && ($Net::SSLhello::sni_name) );
     } else {
@@ -1234,62 +1666,90 @@ sub printCipherStringArray ($$$$$@) {
     my $firstEle = 0;
     if ($arrayLen > 1) { # 2 or more ciphers
         if ( ($cipherArray[0] eq $cipherArray[1]) ) { # cipher suites in server-preferred order
-            if ($legacy eq 'compact') { $cipherOrder = "Server Order"; } else { print "# cipher suites in server-preferred order:\n"; }
+            if ($legacy eq 'csv') { $cipherOrder = "Server Order"; } else { print "# cipher suites in server-preferred order:\n"; }
             $firstEle = 1;
         } else {
-            if ($legacy eq 'compact') { $cipherOrder = "No Order"; } else { print "# server has NO preferred order for cipher suites\n"; }
+            if ($legacy eq 'csv') { $cipherOrder = "No Order"; } else { print "# server has NO preferred order for cipher suites\n"; }
         }
     } elsif ($arrayLen == 0) { # no cipher for this protocol
-        if ($legacy eq 'compact') { # csv-style, protocol without cipher
-            printf "%s%s%s%s%-6s (0x%04X)%s%6s%s%-12s%s%10s%s\n",
+        if ($legacy eq 'csv') { # csv-style, protocol without cipher
+            printf "%s%s%s%s%-6s%s%-8s%s%-12s%s%8s%s\n",
                 $host, $sep,            # %s%s
                 $port, $sep,            # %s%s
-                $ssl,                   # %-6s (
-                $protocol, $sep,        # 0x%04X)%s
-                $sni, $sep,             # %6s%s%
+                $ssl,  $sep,            # %-6s%s
+                $sni, $sep,             # %-8s%s%
                 "", $sep,               # %-12s%s
-                "", $sep;               # %10s%s
+                "", $sep;               # %8s%s
         }
     }
 
     foreach my $protocolCipher (@cipherArray[$firstEle .. $#cipherArray]) { # array may have the first element twice to signal a server-preferred order
-        if ($legacy eq 'compact') { # csv-style
-            printf "%s%s%s%s%-6s (0x%04X)%s%6s%s%-12s%s%10s%s",
+        if ($usesni) {
+            if ($protocol != 0x0304) { # get results for SNI support from tls extension 'server_name'
+                if (exists($_SSLhello{$protocolCipher}{param}{server_name}{RX}{values}) ) { # SNI is suppoted by the server
+                    $sni = "SNI: yes";
+                } else {                                            # the server does not support sni
+                    $sni = "SNI: no";
+                }
+            } else {                                                ## workaround for TLS 1.3, sni extension is not decrypted, yet
+                $sni = "SNI";
+            }
+            $Net::SSLhello::use_sni_name = 1 if ( ($Net::SSLhello::use_sni_name == 0) && ($Net::SSLhello::sni_name) && ($Net::SSLhello::sni_name ne "1") ); ###FIX: quickfix until migration of o-saft.pl is compleated (tbd)
+            $sni .= " ($Net::SSLhello::sni_name)" if ( ($Net::SSLhello::use_sni_name) && ($Net::SSLhello::sni_name) );
+        } else {
+            $sni = "no SNI";
+        }
+        if ($protocol > 0x0002) {                                   # SSLv3 and TLS
+            $cipher = "0x".substr($protocolCipher,-4,4);            # IANA HEX-value
+        } else {                                                    # SSLv2
+            $cipher = "0x".substr($protocolCipher,-6,6);
+        }
+        if ($legacy eq 'csv') {                                     # csv-style
+            printf "%s%s%s%s%-6s%s%-8s%s%-12s%s%8s%s",
                 $host, $sep,            # %s%s
                 $port, $sep,            # %s%s
-                $ssl,                   # %-6s (
-                $protocol, $sep,        # 0x%04X)%s
-                $sni, $sep,             # %6s%s%
+                $ssl,  $sep,            # %-6s%s
+                $sni,  $sep,            # %-8s%s%
                 $cipherOrder, $sep,     # %-12s%s
-                $protocolCipher, $sep;  # %10s%s
+                $cipher, $sep;          # %8s%s
             if ( (defined ($cipherHexHash {$protocolCipher}) ) && ($#{$cipherHexHash {$protocolCipher}}>0) ) { # definiert, max index >0
-                printf "%-28s%s%-34s",
-                    $cipherHexHash {$protocolCipher}[1], $sep,  # %-28s%s
-                    $cipherHexHash {$protocolCipher}[0];        # %-34s
-                if (defined ($_SSLhello {$protocolCipher."\|ServerKey"})) { #length of dh_param
-                    printf "%s%s\n",
-                        $sep, "(".$_SSLhello {$protocolCipher."\|ServerKey"}.")"; # %s%s
-                } else {
-                    print "\n";
-                }
+                printf "%-36s%s%-41s",
+                    $cipherHexHash {$protocolCipher}[1], $sep,      # %-30s%s
+                    $cipherHexHash {$protocolCipher}[0];            # %-36s
             } else { # no RFC-Defined cipher
-                printf "%-28s%s%-34s\n",
-                    "NO-RFC-".$protocolCipher, $sep,            # %-28s%s
-                    "NO-RFC-".$protocolCipher;                  # %-34ss
+                printf "%-36s%s%-41s\n",
+                    "NO-RFC-".$cipher, $sep,                        # %-30s%s
+                    "NO-RFC-".$cipher;                              # %-36ss
             }
+            print $sep;
+            # Print parameters by the cipher
+            if (exists ($_SSLhello{$protocolCipher}{param}{ServerKey}{values})) { #length of dh_param, supported_group
+                print "param: $_SSLhello{$protocolCipher}{param}{ServerKey}{description} (". (@{$_SSLhello{$protocolCipher}{param}{ServerKey}{values}}) . "): ";
+                for (my $_i = 0; $_i <= $#{$_SSLhello{$protocolCipher}{param}{ServerKey}{values}}; $_i++) {
+                    print $sep_sep if ($_i) > 0;
+                    print $_SSLhello{$protocolCipher}{param}{ServerKey}{values}[$_i];
+                }
+            }
+            print "\n";
         } else { # human readable output
                if ( (defined ($cipherHexHash {$protocolCipher}) ) && ($#{$cipherHexHash {$protocolCipher}}>0) ) { # definiert, max index >0
-                    printf "# Cipher-String: >%s<, %-32s, %s",$protocolCipher, $cipherHexHash {$protocolCipher}[1], $cipherHexHash {$protocolCipher}[0];
-               if (defined ($_SSLhello {$protocolCipher."\|ServerKey"})) { #length of dh_param
-                    print  ", (".$_SSLhello {$protocolCipher."\|ServerKey"}.")";
-               }
+                    printf "# Cipher-String: >%s<, %-36s, %s",$cipher, $cipherHexHash {$protocolCipher}[1], $cipherHexHash {$protocolCipher}[0];
+                # Print parameters by the cipher
+                if (exists ($_SSLhello{$protocolCipher}{param}{ServerKey}{values})) { #length of dh_param
+                    print ", Paramters: $_SSLhello{$protocolCipher}{param}{ServerKey}{description}: ";
+                    for (my $_i = 0; $_i <= $#{$_SSLhello{$protocolCipher}{param}{ServerKey}{values}}; $_i++) {
+                        print $sep_sep if ($_i) > 0;
+                        print $_SSLhello{$protocolCipher}{param}{ServerKey}{values}[$_i];
+                    }
+                }
+                print "\n";
             } else {
-                print  "# Cipher-String: >".$protocolCipher."<, NO-RFC-".$protocolCipher;
+                print  "# Cipher-String: >".$cipher."<, NO-RFC-".$cipher;
             }
             print "\n";
         }
     } # foreach my $protocolCipher ...
-    if ($legacy eq 'compact') { # csv-style
+    if ($legacy eq 'csv') { # csv-style
         print "\n";
     }
     _trace4 ("printCipherStringArray: }\n\n");
@@ -1299,7 +1759,7 @@ sub printCipherStringArray ($$$$$@) {
 
 sub checkSSLciphers ($$$@) {
     #? simulate SSL handshake to check any ciphers by the HEX value
-    #? @cipher_str_array: string representation of the cipher octet, e.g. >=SSLv3: 0x0300000Aa, SSLv2: 0x02800102
+    #? @cipher_str_array: string representation of the cipher octets, e.g. >=SSLv3: 0x0300000Aa, SSLv2: 0x02800102
     #? if the first 2 ciphers are identical the array is sorted by priority of the server
     #
     my($host, $port, $ssl, @cipher_str_array) = @_;
@@ -1317,9 +1777,11 @@ sub checkSSLciphers ($$$@) {
     my $protocol = $PROTOCOL_VERSION{$ssl}; # 0x0002, 0x3000, 0x0301, 0x0302
     my $maxCiphers = $Net::SSLhello::max_ciphers;
     local $\ = ""; # no auto '\n' at the end of the line
-    printParameters () if ($Net::SSLhello::trace >= 4);              # additional trace information
-    
-    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'checkSSLciphers', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+    %_SSLhello = ();                        # delete result hash '_SSLhello'
+    printConstants ()  if ($Net::SSLhello::trace > 3);              # additional trace information
+    printParameters () if ($Net::SSLhello::trace > 3);              # additional trace information
+
+    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'checkSSLciphers', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
 
     if ($Net::SSLhello::trace > 0) {
         _trace("checkSSLciphers ($host, $port, $ssl, Cipher-Strings:");
@@ -1357,22 +1819,22 @@ sub checkSSLciphers ($$$@) {
         $cipher_spec = ""; # collect cipher specs
         _trace4_ ("\n");
         foreach my $cipher_str (@cipher_str_array) {
-            _trace4 ("checkSSLciphers: Cipher-String: >$cipher_str< -> ");
+            _trace5 ("checkSSLciphers: add cipher >$cipher_str< to cipher-string -> ");
             if ($cipher_str !~ /0x02/x) { # No SSL2 cipher
                 ($cipher_str) =~ s/(?:0x0[3-9a-fA-F]00|0x)?\s?([a-fA-F0-9]{2})\s?/chr(hex $1)/egx; ## Str2hex
-                _trace4_ ("  >". hexCodedCipher($cipher_str)."<");
+                _trace5_ ("  >". hexCodedCipher($cipher_str)."<");
             } else {
-                _trace4_ ("  SSL2-Cipher suppressed\n");
+                _trace5_ ("  SSL2-Cipher suppressed\n");
                 next; # nothing to do for this cipher
             }
-            _trace4_ ("\n");
+            _trace5_ ("\n");
 
             push (@cipherSpecArray, $cipher_str); # add cipher to next test
             $arrayLen = @cipherSpecArray;
             if ( $arrayLen >= $maxCiphers) { # test up to ... ciphers ($Net::SSLhello::max_ciphers = _MY_SSL3_MAX_CIPHERS) with 1 doCheckSSLciphers (=> Client Hello)
                 $my_error = ""; # reset error message
                 # reset error_handler and set basic information for this sub
-                OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'checkSSLciphers', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+                OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'checkSSLciphers', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
                 $cipher_spec = join ("",@cipherSpecArray); # all ciphers to test in this round
 
                 if ($Net::SSLhello::trace > 1) { # print ciphers that are tested this round:
@@ -1419,9 +1881,11 @@ sub checkSSLciphers ($$$@) {
                         _trace2 ("checkSSLciphers (1.2): '$my_error'\n") if ($my_error);
                         @cipherSpecArray =(); # server did not accept any cipher => nothing to do for these ciphers => empty @cipherSpecArray
                         last;
-                    } elsif ( ($my_error =~ /target.*?ignored/x) || ($my_error =~ /protocol.*?ignored/x) ) {   #### Fatal Errors -> Useless to check more ciphers
+                    } elsif ( ($my_error =~ /target.*?ignored/x)
+                      || ($my_error =~ /protocol.*?ignored/x) ) {
+                         #### Fatal Errors -> Useless to check more ciphers
                         _trace2 ("checkSSLciphers (1.3): \'$my_error\'\n") if ($my_error);
-                        carp ("**WARNING: checkSSLciphers => Exit Loop (1.3)");
+                        carp ("**WARNING: checkSSLciphers => Exit loop (1.3)");
                         @cipherSpecArray =(); # server did not accept any cipher => nothing to do for these ciphers => empty @cipherSpecArray
                         last;
                     } elsif ( ((OSaft::error_handler->get_err_type()) <= (OERR_SSLHELLO_RETRY_CIPHERS)) || ($my_error =~ /\-> Received NO Data/)) { # some servers 'Respond' by closing the TCP connection => check each cipher individually
@@ -1438,7 +1902,7 @@ sub checkSSLciphers ($$$@) {
                         _trace2 ("checkSSLciphers (1.6): \'$my_error\', => Please use the option \'--starttls_delay=SEC\' to slow down\n");
                         carp ("**WARNING: checkSSLciphers (1.6): \'$my_error\', => Please use the option \'--starttls_delay=SEC\' to slow down");
                         next;
-                    } elsif ((OSaft::error_handler->is_err) || $my_error) { # Error found
+                    } elsif ((OSaft::error_handler->is_err) || $my_error) { # error found
                         unless (OSaft::error_handler->is_err) { # no error set, but no socket obtaied
                             OSaft::error_handler->new( {
                                 type    => (OERR_SSLHELLO_ERROR_MESSAGE_IGNORED),
@@ -1449,7 +1913,7 @@ sub checkSSLciphers ($$$@) {
                         }
                         $my_error = ""; # reset error message
                         #reset error_handler and set basic information for this sub
-                        OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'checkSSLciphers', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+                        OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'checkSSLciphers', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
                     } # else: no cipher accepted but no error
                     @cipherSpecArray =(); # => Empty @cipherSpecArray
                 } # end: if 'no ciphers accepted'
@@ -1470,7 +1934,7 @@ sub checkSSLciphers ($$$@) {
             }
             $acceptedCipher = _doCheckSSLciphers($host, $port, $protocol, $cipher_spec, $dtlsEpoch); # test ciphers and collect Accepted ciphers
             _trace2_ ("       ");
-            if ($acceptedCipher) { # received an accepted cipher ## TBD: Error handling using `given'/`when' TBD
+            if ($acceptedCipher) { # received an accepted cipher ## TBD: error handling using `given'/`when' TBD
                 _trace1_ ("=> found >0x0300".hexCodedCipher($acceptedCipher)."<\n");
                 if (grep { $_ eq $acceptedCipher } @cipherSpecArray) { # accepted cipher that was in the checklist
                     @cipherSpecArray = grep { $_ ne $acceptedCipher } @cipherSpecArray;    # delete accepted cipher from ToDo-Array '@cipherSpecArray'
@@ -1483,16 +1947,16 @@ sub checkSSLciphers ($$$@) {
                 _trace1_ ("=> no cipher found\n");
                 if ( ($my_error =~ /Fatal Exit/) || ($my_error =~ /make a connection/ ) || ($my_error =~ /create a socket/) ) { #### Fatal Errors -> Useless to check more ciphers
                     _trace2 ("checkSSLciphers (2.1): '$my_error'\n");
-                    carp ("**WARNING: checkSSLciphers => Exit Loop (2.1)");
+                    carp ("**WARNING: checkSSLciphers => Exit loop (2.1)");
                     @cipherSpecArray =(); # server did not accept any cipher => nothing to do for these ciphers => empty @cipherSpecArray
                     last;
                 } elsif ( ($my_error =~ /answer ignored/) || ($my_error =~ /protocol_version.*?not supported/) || ($my_error =~ /check.*?aborted/) ) { # just stop, no warning
-                    _trace1 ("**checkSSLciphers => Exit Loop (2.2)");
+                    _trace1 ("**checkSSLciphers => Exit loop (2.2)");
                     @cipherSpecArray =(); # server did not accepty any cipher => nothing to do for these ciphers => empty @cipherSpecArray
                     last;       # no more ciphers to test
                 } elsif ( ($my_error =~ /target.*?ignored/x) || ($my_error =~ /protocol.*?ignored/x) ) {   #### Fatal Errors -> Useless to check more ciphers
                     _trace2 ("checkSSLciphers (2.3): '$my_error'\n");
-                    carp ("**WARNING: checkSSLciphers => Exit Loop (2.3)");
+                    carp ("**WARNING: checkSSLciphers => Exit loop (2.3)");
                     @cipherSpecArray =(); # server did not accept any cipher => nothing to do for these ciphers => empty @cipherSpecArray
                     last;
                 } elsif ( $my_error =~ /\-> Received NO Data/) { # some servers 'Respond' by closing the TCP connection => check each cipher individually
@@ -1536,10 +2000,10 @@ sub checkSSLciphers ($$$@) {
         printTLSCipherList ($cipher_str) if ($Net::SSLhello::trace > 3); # abt: _trace4
 
         while ($cipher_str) { # found some cipher => Check priority
-            _trace2 ("checkSSLciphers: Check Cipher Prioity for Cipher-Spec >". hexCodedString($cipher_str)."<\n");
+            _trace2 ("checkSSLciphers: Check Cipher Priority for Cipher-Spec >". hexCodedString($cipher_str)."<\n");
             $my_error = ""; # reset error message
             $acceptedCipher = _doCheckSSLciphers($host, $port, $protocol, $cipher_str, $dtlsEpoch, 1); # collect accepted ciphers by priority
-            _trace2_ ("#                                  -->". hexCodedCipher($acceptedCipher)."<\n");
+            _trace2_ ("# -->". hexCodedCipher($acceptedCipher)."<\n");
             if ($my_error) {
                 _trace2 ("checkSSLciphers (3): '$my_error'\n");
                 # list untested ciphers
@@ -1554,13 +2018,19 @@ sub checkSSLciphers ($$$@) {
                 }
                 # End: list untested ciphers
                 if ( ($my_error =~ /Fatal Exit/) || ($my_error =~ /make a connection/ ) || ($my_error =~ /create a socket/) || ($my_error =~ /target.*?ignored/x) || ($my_error =~ /protocol.*?ignored/x) ) {
-                    _trace1 ("checkSSLciphers (3.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: '$my_error'\n");
-                    carp ("**WARNING: checkSSLciphers (3.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: '$my_error'");
+                    _trace1 ("checkSSLciphers (3.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'\n");
+                    carp ("**WARNING: checkSSLciphers (3.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'");
                     $my_error = ""; # reset error message
                     last;
                 } elsif ( ($my_error =~ /answer ignored/) || ($my_error =~ /protocol_version.*?not supported/) || ($my_error =~ /check.*?aborted/x) ) { # Just stop, no warning
-                    _trace1 ("checkSSLciphers (3.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: '$my_error'\n");
-                    carp ("**WARNING: checkSSLciphers (3.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -     > Exit Loop. Reason: '$my_error'");
+                    _trace1 ("checkSSLciphers (3.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'\n");
+                    carp ("**WARNING: checkSSLciphers (3.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -     > Exit loop. Reason: '$my_error'");
+                    _hint("The server may have an IPS in place. To slow down the test, consider adding the option '--connect-delay=SEC'.");
+                    $my_error = ""; # reset error message
+                    last;
+                } else { #any other Error like: #} elsif ( ( $my_error =~ /\-> Received NO Data/) || ($my_error =~ /answer ignored/) || ($my_error =~ /protocol_version.*?not supported/) || ($my_error =~ /check.*?aborted/) ) {
+                    _trace1 ("checkSSLciphers (3.3): => Received no cipher while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: ''\n");
+                    carp ("**WARNING: checkSSLciphers (3.3): => Received no cipher while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'");
                     _hint("The server may have an IPS in place. To slow down the test, consider adding the option '--connect-delay=SEC'.");
                     $my_error = ""; # reset error message
                     last;
@@ -1568,19 +2038,29 @@ sub checkSSLciphers ($$$@) {
             }
             if ($acceptedCipher) { # received an accepted cipher
                 push (@acceptedCipherSortedArray, $acceptedCipher); # add found cipher to sorted List
+                _doCheckAllExtensions ($host, $port, $protocol, $acceptedCipher, $dtlsEpoch, 1); # check Extension parameters for this cipher
                 $arrayLen = @acceptedCipherSortedArray;
                 if ( $arrayLen == 1) { # 1st cipher
                     if ($acceptedCipher eq ($acceptedCipherArray[0])) { # is equal to 1st cipher of requested cipher_spec
-                        _trace3    ("#   Got back 1st cipher of unsorted List => Check again with this Cipher >".hexCodedTLSCipher($acceptedCipher)."< at the end of the List\n");
+                        _trace3_ ("# --> Got back 1st cipher of unsorted List => Check again with this Cipher >".hexCodedTLSCipher($acceptedCipher)."< at the end of the List\n");
                         shift (@acceptedCipherArray); # delete first cipher in this array
                         $cipher_str = join ("",@acceptedCipherArray).$acceptedCipher; # test again with the first cipher as the last
-                        _trace3 ("Check Cipher Prioity for Cipher-S(2) > ". hexCodedCipher($cipher_str)."< ");
-                        _trace4 ("\n");
+                        _trace3_ ("# --> Check Cipher Prioity for Cipher-S(2) > ". hexCodedString($cipher_str)."<\n");
+                        _trace4_ ("# ---> backup parameters to values of the first check of cipher " . hexCodedTLSCipher($acceptedCipher) . "\n");
+                        my %_param_tmp_hash = ();
+                        %_param_tmp_hash = %{$_SSLhello{'0x0300'.hexCodedCipher($acceptedCipher)}{param}} if (exists ($_SSLhello{'0x0300'.hexCodedCipher($acceptedCipher)}{param}));# save the param hash, just in case we will get the same cipher again
                         $acceptedCipher = _doCheckSSLciphers($host, $port, $protocol, $cipher_str, $dtlsEpoch, 1); # if server uses a priority List we get the same cipher again!
-                        _trace3_ ("#                                  -->". hexCodedCipher($acceptedCipher)."<\n");
-                        _trace4_ ("#                                 --->". hexCodedCipher($acceptedCipher)."<\n");
-                        if ($acceptedCipher) { # received an accepted cipher ### TBD: if ($acceptedCipher eq ($acceptedCipherArray[0]) => no order => return (@acceptedCipherSortedArray[0].$acceptedCipherArray)
+                        _trace3_ ("# -->". hexCodedCipher($acceptedCipher)."<\n");
+                        _trace4_ ("# --->". hexCodedCipher($acceptedCipher)."<\n");
+                        if ($acceptedCipher) { # received an accepted cipher
                             push (@acceptedCipherSortedArray, $acceptedCipher);
+                            if ($acceptedCipher eq $acceptedCipherSortedArray[0]) { # got 1st cipher again  => order -> restore param hash
+                                _trace4_ ("# ---> restore stored parameters to values of first check of cipher ". hexCodedTLSCipher($acceptedCipher) . "\n");
+                                $_SSLhello{'0x0300'.hexCodedCipher($acceptedCipher)}{param} = \%_param_tmp_hash;
+                            } else { # check Extensions for new cipher
+                                _trace4_ ("# ---> is a new cipher => noi preferred order by the server\n");
+                                _doCheckAllExtensions ($host, $port, $protocol, $acceptedCipher, $dtlsEpoch, 1); # check Extension parameters for this cipher
+                            }
                         }
                     } else { # 1st element is nOT equal of 1st checked cipher => sorted => NOW: add cipher again to mark it as sorted list
                         push (@acceptedCipherSortedArray, $acceptedCipher); # add found cipher again to sorted List
@@ -1620,8 +2100,8 @@ sub checkSSLciphers ($$$@) {
                 }
                 # End: list untested ciphers
                 if (  ($my_error =~ /Fatal Exit/) || ($my_error =~ /make a connection/ ) || ($my_error =~ /create a socket/) || ($my_error =~ /target.*?ignored/x) || ($my_error =~ /protocol.*?ignored/x) ) {
-                    _trace1 ("checkSSLciphers (6.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: '$my_error'\n");
-                    carp ("**WARNING: checkSSLciphers (6.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: '$my_error'");
+                    _trace1 ("checkSSLciphers (6.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'\n");
+                    carp ("**WARNING: checkSSLciphers (6.1): => Unexpected Loss of Connection while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'");
                     $my_error = ""; # reset error message
                     last;
                 } elsif ($my_error =~ /Error 1: too many requests/) {   #### Too many connections: Automatic suspension and higher timeout did not help
@@ -1629,8 +2109,14 @@ sub checkSSLciphers ($$$@) {
                     carp ("**WARNING: checkSSLciphers (1.6): \'$my_error\', => Please use the option \'--starttls_delay=SEC\' to slow down");
                     next;
                 } elsif ($my_error) { #any other Error like: #} elsif ( ( $my_error =~ /\-> Received NO Data/) || ($my_error =~ /answer ignored/) || ($my_error =~ /protocol_version.*?not supported/) || ($my_error =~ /check.*?aborted/) ) {
-                    _trace1 ("checkSSLciphers (6.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: ''\n");
-                    carp ("**WARNING: checkSSLciphers (6.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -> Exit Loop. Reason: '$my_error'");
+                    _trace1 ("checkSSLciphers (6.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: ''\n");
+                    carp ("**WARNING: checkSSLciphers (6.2): => Unexpected Lack of Data or unexpected Answer while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'");
+                    _hint("The server may have an IPS in place. To slow down the test, consider adding the option '--connect-delay=SEC'.");
+                    $my_error = ""; # reset error message
+                    last;
+                } else { #any other Error like: #} elsif ( ( $my_error =~ /\-> Received NO Data/) || ($my_error =~ /answer ignored/) || ($my_error =~ /protocol_version.*?not supported/) || ($my_error =~ /check.*?aborted/) ) {
+                    _trace1 ("checkSSLciphers (6.3): => Received no cipher while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: ''\n");
+                    carp ("**WARNING: checkSSLciphers (6.3): => Received no cipher while checking the priority of the ciphers \'$str\' -> Exit loop. Reason: '$my_error'");
                     _hint("The server may have an IPS in place. To slow down the test, consider adding the option '--connect-delay=SEC'.");
                     $my_error = ""; # reset error message
                     last;
@@ -1639,6 +2125,14 @@ sub checkSSLciphers ($$$@) {
         } # end while-Loop
     ###      _trace4 ("#   Accepted (sorted) Ciphers [cipher1 = cipher 2 => sorted by Server]:\n");
     ### TBD: _trace4: print all ciphers?!!
+
+        ### Ckeck all Extension Parameters for extensions that have been previously flagged to get more than one answer, eg. supported_groups
+        # my $_first = 0;
+        # $_first = 1 if ( ((@acceptedCipherSortedArray) > 1) && ($acceptedCipherSortedArray[0] eq $acceptedCipherSortedArray[1]) ); # jump over the first cipher if equal to the second (sorted list)
+        # foreach my $_i ($_first .. (@acceptedCipherSortedArray)) {
+        #     _doCheckAllExtensions ($host, $port, $protocol, $acceptedCipherSortedArray[$_i], $dtlsEpoch, 1); # if server uses a priority List we get the same cipher again!$
+        # }
+
         _trace(" checkSSLciphers: }\n\n");
         return (compileTLSCipherArray (join ("",@acceptedCipherSortedArray)));
     }
@@ -1724,22 +2218,22 @@ sub openTcpSSLconnection ($$) {
           ],
           ["POP3",                                      # according RFC2595; found good hints at 'https://github.com/iSECPartners/sslyze/blob/master/utils/SSLyzeSSLConnection.py'
             ".*?(?:^|\\n)\\+\\s*OK(?:\\s+|.*?ready|\\r|\\n)",   # Phase1: receive '+ OK...ready.'
-            "",                                                 # Phase2: send    -unused-
-            "",                                                 # Phase3: receive -unused-
-            "STLS\r\n",                                         # Phase4: send    'STLS' (-> STARTTLS)'
-            ".*?(?:^|\\n)\\+\\s*OK",                            # Phase5: receive '+OK Begin TLS'
-            "",                                                 # Error1: temporary unreachable (too many connections);
-            "",                                                 # Error2: This SSL/TLS-Protocol is not supported
+            "",                                         # Phase2: send    -unused-
+            "",                                         # Phase3: receive -unused-
+            "STLS\r\n",                                 # Phase4: send    'STLS' (-> STARTTLS)'
+            ".*?(?:^|\\n)\\+\\s*OK",                    # Phase5: receive '+OK Begin TLS'
+            "",                                         # Error1: temporary unreachable (too many connections);
+            "",                                         # Error2: This SSL/TLS-Protocol is not supported
             ".*?(?:^|\\n)\\-\\s*ERR.*?(?:invalid command|TLS.*?(?:isn\\'t|not)|\\s+no\\s+.*?(?:SSL|TLS)|authoriz)", # Error3: fatal Error/STARTTLS not supported: '-ERR TLS support isn't enabled'
           ],
           ["POP3_CAPACITY",                             # according RFC2595; found good hints at 'https://github.com/iSECPartners/sslyze/blob/master/utils/SSLyzeSSLConnection.py'
             ".*?(?:^|\\n)\\+\\s*OK(?:\\s+|.*?ready|\\r|\\n)",   # Phase1: receive '+ OK...ready.'
-            "CAPA\r\n",                                         # Phase2: send view CAPABILITY (optional)
-            ".*?(?:^|\\n)\\+\\s*OK",                            # Phase3: receive List of should include STLS
-            "STLS\r\n",                                         # Phase4: send    'STLS' (-> STARTTLS)'
-            ".*?(?:^|\\n)\\+\\s*OK",                            # Phase5: receive '+OK Begin TLS'
-            "",                                                 # Error1: temporary unreachable (too many connections);
-            "",                                                 # Error2: This SSL/TLS-Protocol is not supported
+            "CAPA\r\n",                                 # Phase2: send view CAPABILITY (optional)
+            ".*?(?:^|\\n)\\+\\s*OK",                    # Phase3: receive List of should include STLS
+            "STLS\r\n",                                 # Phase4: send    'STLS' (-> STARTTLS)'
+            ".*?(?:^|\\n)\\+\\s*OK",                    # Phase5: receive '+OK Begin TLS'
+            "",                                         # Error1: temporary unreachable (too many connections);
+            "",                                         # Error2: This SSL/TLS-Protocol is not supported
             ".*?(?:^|\\n)\\-\\s*ERR.*?(?:invalid command|TLS.*?(?:isn\\'t|not)|\\s+no\\s+.*?(?:SSL|TLS)|authoriz)", # Error3: fatal Error/STARTTLS not supported: '-ERR TLS support isn't enabled'
           ],
           ["FTPS",                                      # found good hints at 'https://github.com/iSECPartners/sslyze/blob/master/utils/SSLyzeSSLConnection.py'
@@ -1784,18 +2278,18 @@ sub openTcpSSLconnection ($$) {
             "\\x03\\x00\\x00\\x13\\x0E\\xD0.....\\x03.\\x08\\x00[\\x01\\x02\\x08]\\x00\\x00\\x00", # Error3: fatal Error/STARTTLS not supported
           ],
           ["XMPP",                                      # according rfc3920; found good hints at 'https://github.com/iSECPartners/sslyze/blob/master/utils/SSLyzeSSLConnection.py'$
-            "",                                                     # Phase1: receive -unused-$
+            "",                                         # Phase1: receive -unused-$
             "<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'".
              " to='".$host."' xml:lang='en' version='1.0'>",        # Phase2: send  Client initiates stream to server (no from to try to avoid to get blocked due to too much connects!)
 ##             " from='osaft\@im.owasp.org' to='".$host."' xml:lang='en' version='1.0'>", # Phase2: send  Client initiates stream to server
 ###          " xmlns:tls='http://www.ietf.org/rfc/rfc2595.txt' to='".$host."' xml:lang='en' version='1.0'>", # Phase2: send  Client initiates stream to server
-            "<stream:stream.*?>",                                   # Phase3: receive response steam header
+            "<stream:stream.*?>",                       # Phase3: receive response steam header
             "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>",  # Phase4: send    'STARTTLS'$
             "<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>",   # Phase5: receive 'Start TLS request accepted.'
-                                                                    # Errors: text xmlns='urn:ietf:params:xml:ns:xmpp-streams'>You exceeded the number of connections/logins allowed in 60 seconds, good bye.</text>
-            "",                                                     # Error1: temporary unreachable (too many connections);
-            "",                                                     # Error2: This SSL/TLS-Protocol is not supported
-            "",                                                     # Error3: fatal Error/STARTTLS not supported
+                                                        # Errors: text xmlns='urn:ietf:params:xml:ns:xmpp-streams'>You exceeded the number of connections/logins allowed in 60 seconds, good bye.</text>
+            "",                                         # Error1: temporary unreachable (too many connections);
+            "",                                         # Error2: This SSL/TLS-Protocol is not supported
+            "",                                         # Error3: fatal Error/STARTTLS not supported
           ],
           ["ACAP",                                      # according RFC2595; http://www.vocal.com/secure-communication/secure-acap-over-ssltls/
             ".*?(?:^|\\n)\\*\\s*OK.*?ACAP(?:\\s|\\d)",  # Phase1: receive '* OK ACAP'
@@ -1807,50 +2301,50 @@ sub openTcpSSLconnection ($$) {
             "",                                         # Error2: This SSL/TLS-Protocol is not supported
             "",                                         # Error3: fatal Error/STARTTLS not supported
           ],
-          ["IRC",                                               # according https://github.com/ircv3/ircv3-specifications/blob/master/extensions/tls-3.1 and
-                                                                #           https://gist.github.com/grawity/f661adc10fb2d7a580ea
-            ".*?NOTICE.*?",                                     # Phase1: receive ':<Server> NOTICE AUTH :*** No ident response; username prefixed with ~'
-            "",                                                 # Phase2: send    -unused-
-            "",                                                 # Phase2: receive -unused-
-            "STARTTLS\r\n",                                     # Phase4: send    'STARTTLS'
-            ".*?(?:^|\n)\\:.*?\\s670\\s+\\:STARTTLS\\s",        # Phase5: receive ':<Server> 670  :STARTTLS successful, go ahead with TLS handshake'
+          ["IRC",                                       # according https://github.com/ircv3/ircv3-specifications/blob/master/extensions/tls-3.1 and
+                                                        #           https://gist.github.com/grawity/f661adc10fb2d7a580ea
+            ".*?NOTICE.*?",                             # Phase1: receive ':<Server> NOTICE AUTH :*** No ident response; username prefixed with ~'
+            "",                                         # Phase2: send    -unused-
+            "",                                         # Phase2: receive -unused-
+            "STARTTLS\r\n",                             # Phase4: send    'STARTTLS'
+            ".*?(?:^|\n)\\:.*?\\s670\\s+\\:STARTTLS\\s",# Phase5: receive ':<Server> 670  :STARTTLS successful, go ahead with TLS handshake'
             ".*?(?:^|\n)ERROR\\s.*?too.*?(?:fast|much|many)",   # Error1: temporary unreachable (too many connections);
-            "",                                                 # Error2: this SSL/TLS-Protocol is not supported
-            ".*?(?:^|\\n)421\\s",                               # Error3: fatal Error/STARTTLS not supported: '421 ERR_UNKNOWNCOMMAND "<command> :Unknown command"'
+            "",                                         # Error2: this SSL/TLS-Protocol is not supported
+            ".*?(?:^|\\n)421\\s",                       # Error3: fatal Error/STARTTLS not supported: '421 ERR_UNKNOWNCOMMAND "<command> :Unknown command"'
           ],
-          ["IRC_CAPACITY",                                      # according https://github.com/ircv3/ircv3-specifications/blob/master/extensions/tls-3.1 and
-                                                                #           https://gist.github.com/grawity/f661adc10fb2d7a580ea
-            ".*?NOTICE.*?",                                     # Phase1: receive ':<Server> NOTICE AUTH :*** No ident response; username prefixed with ~'
-            "CAP LS\r\n",                                       # Phase2: send    view CAPABILITY (optional)
+          ["IRC_CAPACITY",                              # according https://github.com/ircv3/ircv3-specifications/blob/master/extensions/tls-3.1 and
+                                                        #           https://gist.github.com/grawity/f661adc10fb2d7a580ea
+            ".*?NOTICE.*?",                             # Phase1: receive ':<Server> NOTICE AUTH :*** No ident response; username prefixed with ~'
+            "CAP LS\r\n",                               # Phase2: send    view CAPABILITY (optional)
             ".*?(?:^|\n)\\:.*?\\sCAP\\s.*?\\:.*tls(?:\\s|$|\r\n)",    # Phase3: receive :<Server> CAP * LS :account-notify away-notify multi-prefix tls us     erhost-in-names
-            "STARTTLS\r\n",                                     # Phase4: send    'STARTTLS'
-            ".*?(?:^|\n)\\:.*?\\s670\\s+\\:STARTTLS\\s",        # Phase5: receive ':<Server> 670  :STARTTLS successful, go ahead with TLS handshake'
+            "STARTTLS\r\n",                             # Phase4: send    'STARTTLS'
+            ".*?(?:^|\n)\\:.*?\\s670\\s+\\:STARTTLS\\s",# Phase5: receive ':<Server> 670  :STARTTLS successful, go ahead with TLS handshake'
             ".*?(?:^|\n)ERROR\\s.*?too.*?(?:fast|much|many)",   # Error1: temporary unreachable (too many connections);
-            "",                                                 # Error2: this SSL/TLS-Protocol is not supported
-            ".*?(?:^|\\n)421\\s",                               # Error3: fatal Error/STARTTLS not supported: '421 ERR_UNKNOWNCOMMAND "<command> :Unknown command"'
+            "",                                         # Error2: this SSL/TLS-Protocol is not supported
+            ".*?(?:^|\\n)421\\s",                       # Error3: fatal Error/STARTTLS not supported: '421 ERR_UNKNOWNCOMMAND "<command> :Unknown command"'
           ],
-          ["CUSTOM",                                            # CUSTOMize your own starttls sequence wit up to 5 phases
-            "",                                                 # Phase1: receive <placeholder|-unused->
-            "",                                                 # Phase2: send    <placeholder|-unused->
-            "",                                                 # Phase2: receive <placeholder|-unused->
-            "",                                                 # Phase4: send    <placeholder|-unused-> STARTTLS'
-            "",                                                 # Phase5: receive <placeholder|-unused-> OK (Begin TLS Negotiation)'
-            "",                                                 # Error1: temporary unreachable (too many connections): <placeholder|-unused->
-            "",                                                 # Error2: this SSL/TLS-Protocol is not supported: <placeholder|-unused->
-            "",                                                 # Error3: fatal Error/STARTTLS not supported: <placeholder|-unused->
+          ["CUSTOM",                                    # CUSTOMise your own starttls sequence with up to 5 phases
+            "",                                         # Phase1: receive <placeholder|-unused->
+            "",                                         # Phase2: send    <placeholder|-unused->
+            "",                                         # Phase2: receive <placeholder|-unused->
+            "",                                         # Phase4: send    <placeholder|-unused-> STARTTLS'
+            "",                                         # Phase5: receive <placeholder|-unused-> OK (Begin TLS Negotiation)'
+            "",                                         # Error1: temporary unreachable (too many connections): <placeholder|-unused->
+            "",                                         # Error2: this SSL/TLS-Protocol is not supported: <placeholder|-unused->
+            "",                                         # Error3: fatal Error/STARTTLS not supported: <placeholder|-unused->
           ],
         );
 
     my %startTlsTypeHash;
     local $my_error = ""; # reset error message
-    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'openTcpSSLconnection', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'openTcpSSLconnection', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
     if ( ($Net::SSLhello::proxyhost) && ($Net::SSLhello::proxyport) ) { # via proxy
         _trace2 ("openTcpSSLconnection: Try to connect and open a SSL connection to $host:$port via proxy ".$Net::SSLhello::proxyhost.":".$Net::SSLhello::proxyport."\n");
     } else {
         _trace2 ("openTcpSSLconnection: Try to connect and open a SSL connection to $host:$port\n");
     }
     $retryCnt = 0;
-    if ($Net::SSLhello::starttls)  {                            # starttls -> find STARTTLS type
+    if ($Net::SSLhello::starttls)  {                    # starttls -> find STARTTLS type
         $startTlsTypeHash{$starttls_matrix[$_][0]} = $_ for 0 .. scalar(@starttls_matrix) - 1;
         _trace4 ("openTcpSSLconnection: nr of Elements in starttlsTypeMatrix: ".scalar(@starttls_matrix)."; looking for starttlsType $Net::SSLhello::starttlsType\n");
 
@@ -1880,10 +2374,10 @@ sub openTcpSSLconnection ($$) {
                     exit (1);                                   # stop program
                 }
             }
-            if ($starttls_matrix[$starttlsType][0] eq 'CUSTOM') { # customize the starttls_matrix
+            if ($starttls_matrix[$starttlsType][0] eq 'CUSTOM') { # customise the starttls_matrix
                 for my $i (1..8) {
                     if (defined($Net::SSLhello::starttlsPhaseArray[$i])) {
-                        _trace4 ("openTcpSSLconnection: Customize starttls_matrix: \$Net::SSLhello::starttlsPhaseArray[$i]= >$Net::SSLhello::starttlsPhaseArray[$i]< = hex: >".unpack("H*",$Net::SSLhello::starttlsPhaseArray[$i])."<\n");
+                        _trace4 ("openTcpSSLconnection: Customise starttls_matrix: \$Net::SSLhello::starttlsPhaseArray[$i]= >$Net::SSLhello::starttlsPhaseArray[$i]< = hex: >".unpack("H*",$Net::SSLhello::starttlsPhaseArray[$i])."<\n");
                         if (($i == 2) || ($i == 4)) { #TX Data needs a different handling
                             $starttls_matrix[$starttlsType][$i] = "$Net::SSLhello::starttlsPhaseArray[$i]";
                             #($starttls_matrix[$starttlsType][$i]) =~ s/(\[^xc]|\c.)/chr(ord('$1'))/eg; ## escape2hex does not work
@@ -1896,7 +2390,7 @@ sub openTcpSSLconnection ($$) {
                         } else { # normal copy
                             $starttls_matrix[$starttlsType][$i] = $Net::SSLhello::starttlsPhaseArray[$i];
                         }
-                        _trace2 ("openTcpSSLconnection: Customize \$starttls_matrix[$starttlsType][$i]= >$starttls_matrix[$starttlsType][$i]< = hex: >".unpack("H*",$starttls_matrix[$starttlsType][$i])."<\n");
+                        _trace2 ("openTcpSSLconnection: Customise \$starttls_matrix[$starttlsType][$i]= >$starttls_matrix[$starttlsType][$i]< = hex: >".unpack("H*",$starttls_matrix[$starttlsType][$i])."<\n");
                     }
                 }
             }
@@ -1907,7 +2401,7 @@ sub openTcpSSLconnection ($$) {
     }
 
     RETRY_TO_OPEN_SSL_CONNECTION: { do { # connect to #server:port (via proxy) and open a ssl connection (use STARTTLS if activated)
-        OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'openTcpSSLconnection', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+        OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'openTcpSSLconnection', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
         if ( defined($Net::SSLhello::connect_delay) && ($Net::SSLhello::connect_delay > 0) ) {
             _trace_ ("\n");
             _trace  ("openTcpSSLconnection: connect delay $cfg{'connect_delay'} second(s)\n");
@@ -1936,23 +2430,27 @@ sub openTcpSSLconnection ($$) {
             local $@ = "";
             eval {
                 local $SIG{ALRM}= "Net::SSLhello::_timedOut";
-                alarm($alarmTimeout);                               # set Alarm for get-socket and set-socketoptions->timeout(s)
-                socket($socket,PF_INET,SOCK_STREAM,(getprotobyname('tcp'))[2]) or croak "Can't create a socket \'$!\' -> target $host:$port ignored ";
+                alarm($alarmTimeout);                       # set Alarm for get-socket and set-socketoptions->timeout(s)
+                my ($_dummy1, $_dummy2, $_protocol) = getprotobyname('tcp'); # is failsafer than '(getprotobyname('tcp'))[2]'
+                if (! $_protocol) { 
+                    $_protocol = Socket::IPPROTO_TCP;
+                }
+                socket($socket, PF_INET, SOCK_STREAM, $_protocol) or croak "Can't create a socket \'$!\' -> target $host:$port ignored ";
                 setsockopt($socket, SOL_SOCKET, SO_SNDTIMEO, pack('L!L!', $Net::SSLhello::timeout, 0) ) or croak "Can't set socket Sent-Timeout \'$!\' -> target $host:$port ignored"; #L!L! => compatible to 32 and 64-bit
                 setsockopt($socket, SOL_SOCKET, SO_RCVTIMEO, pack('L!L!', $Net::SSLhello::timeout, 0) ) or croak "Can't set socket Receive-Timeout \'$!\' -> target $host:$port ignored";
                 alarm (0);      # clear alarm
-            } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {          # End of eval section, begin of an error section ('or do'), that works for Windows, too.
-                $my_error = $@;                                     # save the error message as soon as possible
-                alarm (0);                                          # clear alarm if not done before
+            } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {  # End of eval section, begin of an error section ('or do'), that works for Windows, too.
+                $my_error = $@;                             # save the error message as soon as possible
+                alarm (0);                                  # clear alarm if not done before
                 OSaft::error_handler->new( {
                     type    => (OERR_SSLHELLO_RETRY_HOST),
                     id      => 'socket (1)',
                     message => $my_error,
                     warn    => 0,
                 } );
-                next RETRY_TO_OPEN_SSL_CONNECTION;                  # Error -> next retry
-            }};                                                     # End of the section 'or do { if () { ...'. Do NOT forget the;
-            alarm (0);                                              # clear alarm if not done before
+                next RETRY_TO_OPEN_SSL_CONNECTION;          # error -> next retry
+            }};                                             # end of the section 'or do { if () { ...'. Do NOT forget the;
+            alarm (0);                                      # clear alarm if not done before
         } # << end a block
 
         ######## Connection via a proxy ########
@@ -1969,7 +2467,7 @@ sub openTcpSSLconnection ($$) {
                         message => $my_error,
                         warn    => 0,
                     } );
-                    last RETRY_TO_OPEN_SSL_CONNECTION;              # retry
+                    last RETRY_TO_OPEN_SSL_CONNECTION;      # retry
                 }
             } # << end a block
 
@@ -1988,9 +2486,9 @@ sub openTcpSSLconnection ($$) {
                     #   Timeout => $timeout,
                     # ) or die "Can't make a connection to proxy $Net::SSLhello::proxyhost:$Net::SSLhello::proxyport ($@, $!) -> target $host:$port ignored"; # error handling
                     alarm (0);
-                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
-                    $my_error = $@;                                    # save the error message as soon as possible
-                    alarm (0);                                          # clear alarm if not done before
+                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) { # end of eval section, begin of an error section ('or do'), that works for Windows, too.
+                    $my_error = $@;                         # save the error message as soon as possible
+                    alarm (0);                              # clear alarm if not done before
                     OSaft::error_handler->new( {
                         type    => (OERR_SSLHELLO_RETRY_HOST),
                         id      => 'connection via proxy (1)',
@@ -2001,14 +2499,14 @@ sub openTcpSSLconnection ($$) {
                     #_trace2 ("openTcpSSLconnection: $@ -> Fatal Exit in openTcpSSLconnection");
                     sleep (1);
                     # last; # no retry
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # next retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
-                alarm (0);                                          # clear alarm if not done before
+                    next RETRY_TO_OPEN_SSL_CONNECTION;      # next retry
+                }};                                         # end of the section 'or do { if () { ...'. Do NOT forget the;
+                alarm (0);                                  # clear alarm if not done before
             } # << end a block
 
             { # >> start a block
                 $my_error = "";
-                local $@ = ""; 
+                local $@ = "";
                 eval {
                     $proxyConnect=_PROXY_CONNECT_MESSAGE1.$host.":".$port._PROXY_CONNECT_MESSAGE2;
                     _trace4 ("openTcpSSLconnection: ## ProxyConnect-Message: >$proxyConnect<\n");
@@ -2016,9 +2514,9 @@ sub openTcpSSLconnection ($$) {
                     alarm($alarmTimeout); # set Alarm for Connect
                     defined(send($socket, $proxyConnect, 0)) || croak "Can't make a connection to $host:$port via proxy $Net::SSLhello::proxyhost:$Net::SSLhello::proxyport [".inet_ntoa($connect2ip).":$Net::SSLhello::proxyport] -> target $host:$port ignored";
                     alarm (0);
-                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
-                    $my_error = $@;                                 # save the error message as soon as possible
-                    alarm (0);                                      # clear alarm if not done before
+                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) { # end of eval section, begin of an error section ('or do'), that works for Windows, too.
+                    $my_error = $@;                         # save the error message as soon as possible
+                    alarm (0);                              # clear alarm if not done before
                     OSaft::error_handler->new( {
                         type    => (OERR_SSLHELLO_RETRY_HOST),
                         id      => 'connection via proxy (2)',
@@ -2030,9 +2528,9 @@ sub openTcpSSLconnection ($$) {
                         _trace2 ("openTcpSSLconnection: via proxy $host:$port: wait $slowServerDelay sec(s) to wait for slow proxies\n");
                         sleep ($slowServerDelay);
                     }
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
-                alarm (0);                                          # clear alarm if not done before
+                    next RETRY_TO_OPEN_SSL_CONNECTION;      # retry
+                }};                                         # end of the section 'or do { if () { ...'. Do NOT forget the;
+                alarm (0);                                  # clear alarm if not done before
             } # << end a block
 
             { # start a block
@@ -2057,9 +2555,9 @@ sub openTcpSSLconnection ($$) {
                         #### TBD TBD received NO Data TBD TBD ###
                     }
                     alarm (0);
-                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
-                    $my_error = $@;                                 # save the error message as soon as possible
-                    alarm (0);                                      # clear alarm if not done before
+                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) { # end of eval section, begin of an error section ('or do'), that works for Windows, too.
+                    $my_error = $@;                         # save the error message as soon as possible
+                    alarm (0);                              # clear alarm if not done before
                     OSaft::error_handler->new( {
                         type    => (OERR_SSLHELLO_RETRY_HOST),
                         id      => 'connection via proxy (3)',
@@ -2071,9 +2569,9 @@ sub openTcpSSLconnection ($$) {
                         _trace2 ("openTcpSSLconnection: via proxy $host:$port: wait $slowServerDelay sec(s) to wait for slow proxies\n");
                         sleep ($slowServerDelay);
                     }
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
-                alarm (0);                                          # clear alarm if not done before
+                    next RETRY_TO_OPEN_SSL_CONNECTION;      # retry
+                }};                                         # end of the section 'or do { if () { ...'. Do NOT forget the;
+                alarm (0);                                  # clear alarm if not done before
             } # << end a block
 
             if (length ($input) >0) { # got data
@@ -2142,14 +2640,14 @@ sub openTcpSSLconnection ($$) {
                         warn    => 0,
                     } );
                     close ($socket) or carp("**WARNING: ". OSaft::error_handler->get_err_str() ."; Can't close socket, too: $!");
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
-                alarm (0);                                          # clear alarm if not done before
+                    next RETRY_TO_OPEN_SSL_CONNECTION;      # retry
+                }};                                         # end of the section 'or do { if () { ...'. Do NOT forget the;
+                alarm (0);                                  # clear alarm if not done before
                 _trace2 ("openTcpSSLconnection: Connected to server $host:$port\n");
             } # << end a block
         }
 
-        if ( !(OSaft::error_handler->is_err) && ($Net::SSLhello::starttls) )  { # no Error and starttls ###############  Begin STARTTLS Support #############
+        if ( !(OSaft::error_handler->is_err) && ($Net::SSLhello::starttls) )  { # no error and starttls ###############  Begin STARTTLS Support #############
             _trace2 ("openTcpSSLconnection: try to STARTTLS using the ".$starttls_matrix[$starttlsType][0]." protocol for server $host:$port, Retry = $retryCnt\n");
             # select(undef, undef, undef, _SLEEP_B4_2ND_READ) if ($sleepSecs > 0) || ($retryCnt > 0); # if slowed down or retry: sleep some ms
             if (($slowServerDelay > 0) || ($retryCnt > 0)) { # slow server or retry: sleep some secs
@@ -2169,11 +2667,11 @@ sub openTcpSSLconnection ($$) {
                     alarm($alarmTimeout);
                     recv ($socket, $input, 32767, 0); #|| die "openTcpSSLconnection: STARTTLS (Phase 1aa): Did *NOT* get any ".$starttls_matrix[$starttlsType][0]." Message from $host:$port\n"; # did not receive a Message ## unless seems to work better than if!!
                     alarm (0);
-                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
+                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # end of eval section, begin of an error section ('or do'), that works for Windows, too.
                     $my_error = "STARTTLS phase #1 failed): $@";    # save the error message as soon as possible
                     alarm (0);                                      # clear alarm if not done before
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # Error -> next retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
+                    next RETRY_TO_OPEN_SSL_CONNECTION;              # error -> next retry
+                }};                                                 # end of the section 'or do { if () { ...'. Do NOT forget the;
                 alarm (0);                                          # clear alarm if not done before
                 if (length ($input) >0) { # received Data => 220 smtp.server.com Simple Mail Transfer Service Ready?
                     _trace2 ("openTcpSSLconnection: ## STARTTLS (Phase 1):  ... Received ".$starttls_matrix[$starttlsType][0]."-Message (1): ".length($input)." bytes: >"._chomp_r($input)."<\n");
@@ -2279,11 +2777,11 @@ sub openTcpSSLconnection ($$) {
                     alarm($alarmTimeout);
                     recv ($socket, $input, 32767, 0);
                     alarm (0);
-                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
+                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # end of eval section, begin of an error section ('or do'), that works for Windows, too.
                     $my_error = "STARTTLS phase #3 failed): $@";    # save the error message as soon as possible
                     alarm (0);                                      # clear alarm if not done before
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # Error -> next retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
+                    next RETRY_TO_OPEN_SSL_CONNECTION;              # error -> next retry
+                }};                                                 # end of the section 'or do { if () { ...'. Do NOT forget the;
                 alarm (0);                                          # clear alarm if not done before
                 if (length ($input) >0) { # received Data => 250-smtp.server.com Hello o-saft.localhost?
                     _trace3 ("openTcpSSLconnection: ## STARTTLS (Phase 3): ... Received  $starttls_matrix[$starttlsType][0]-Hello: ".length($input)." bytes\n      >".substr(_chomp_r($input),0,64)." ...<\n");
@@ -2293,7 +2791,7 @@ sub openTcpSSLconnection ($$) {
                         _trace2 ("openTcpSSLconnection: ## STARTTLS (Phase 3): received a $starttls_matrix[$starttlsType][0] Hello Answer from the Server $host:$port: >"._chomp_r($input)."<\n");
                     } else {
                         $input=_chomp_r($input);
-                        if ( ($starttls_matrix[$starttlsType][6]) && ($input =~ /$starttls_matrix[$starttlsType][6]/) ) { # did receive a temporary Error Message
+                        if ( ($starttls_matrix[$starttlsType][6]) && ($input =~ /$starttls_matrix[$starttlsType][6]/) ) { # did receive a temporary error message
                            if ($retryCnt > $Net::SSLhello::retry) { # already an additional final retry -> restore last error message
                                 $my_error = "STARTTLS (Phase 3): Error 1: too many requests: $host:$port \'$input\' -> too many retries ($retryCnt)";
                                 last RETRY_TO_OPEN_SSL_CONNECTION;
@@ -2388,11 +2886,11 @@ sub openTcpSSLconnection ($$) {
                     alarm($alarmTimeout);
                     recv ($socket, $input, 32767, 0);
                     alarm (0);
-                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
+                } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # end of eval section, begin of an error section ('or do'), that works for Windows, too.
                     $my_error = "STARTTLS phase #5 failed): $@";    # save the error message as soon as possible
                     alarm (0);                                      # clear alarm if not done before
-                    next RETRY_TO_OPEN_SSL_CONNECTION;              # Error -> next retry
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
+                    next RETRY_TO_OPEN_SSL_CONNECTION;              # error -> next retry
+                }};                                                 # end of the section 'or do { if () { ...'. Do NOT forget the;
                 alarm (0);                                          # clear alarm if not done before
                 if (length ($input) >0)  { # received Data => 220
                     _trace3 ("openTcpSSLconnection: ## STARTTLS (Phase 5): ... Received STARTTLS-Answer: ".length($input)." bytes\n      >".substr(_chomp_r($input),0,64)." ...<\n");
@@ -2461,7 +2959,7 @@ sub openTcpSSLconnection ($$) {
             } # end-if $starttls_matrix[$starttlsType][5]
         } ###############    End STARTTLS Support  ##################
     } while ( ($my_error) && ( ($retryCnt++ < $Net::SSLhello::retry) || ($retryCnt == $Net::SSLhello::retry + 2) ) ); } # 1 Extra retry if $retryCnt++ == $Net::SSLhello::retry +2
-    if ($my_error) { #Error
+    if ($my_error) { #error
         chomp($my_error);
         carp ("**WARNING: openTcpSSLconnection: $my_error");
         _trace2 ("openTcpSSLconnection: Exit openTcpSSLconnection }\n");
@@ -2489,7 +2987,7 @@ sub _doCheckSSLciphers ($$$$;$$) {
     my $protocol     = shift || 0;  # 0x0002, 0x3000, 0x0301, 0x0302, 0x0303, etc
     my $cipher_spec  = shift || "";
     my $dtls_epoch   = shift || 0;  # optional, used in DTLS only
-    my $parseAllRecords = shift || 0; # option to read, parse and analyze all received records (-> 1)
+    my $parseAllRecords = shift || 0; # option to read, parse and analyse all received records (-> 1)
     my $socket;
     my $connect2ip;
     my $proxyConnect = "";
@@ -2505,6 +3003,7 @@ sub _doCheckSSLciphers ($$$$;$$) {
     my ($recordType, $recordVersion, $recordLen, $recordEpoch, $recordSeqNr) = (0,0,0,0,0);
     my $recordData = "";
     my $acceptedCipher="";
+    my $dummy=""; # if the return value is not used in this case
     my $retryCnt = 0;
     my $firstMessage = "";
     my $secondMessage = "";
@@ -2519,16 +3018,16 @@ sub _doCheckSSLciphers ($$$$;$$) {
     my $buffer = "";
     my $lastMsgType = $HANDSHAKE_TYPE {'<<undefined>>'}; # undefined message type
     my $lastRecordType = $RECORD_TYPE {'<<undefined>>'}; # undefined record type
+    my $lastRecordData = "";
 
-    my %rhash = reverse %PROTOCOL_VERSION;
-    my $ssl = $rhash{$protocol};
+    my $ssl = $PROTOCOL_NAME_BY_HEX{$protocol};
     if (! defined $ssl) {
         $ssl = "--unknown protocol--";
     }
 
     _trace4 (sprintf ("_doCheckSSLciphers ($host, $port, $ssl: >0x%04X<\n          >",$protocol).hexCodedString ($cipher_spec,"           ") .") {\n");
     local $my_error = ""; # reset error message
-    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => '_doCheckSSLciphers', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => '_doCheckSSLciphers', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
     $isUdp = ( (($protocol & 0xFF00) == $PROTOCOL_VERSION{'DTLSfamily'}) || ($protocol == $PROTOCOL_VERSION{'DTLSv09'})  ); # udp for DTLS1.x or DTLSv09 (OpenSSL pre 0.9.8f)
 
     unless ($isUdp) { # NO UDP = TCP
@@ -2594,9 +3093,9 @@ sub _doCheckSSLciphers ($$$$;$$) {
             alarm($alarmTimeout); # set alarm for connect
             defined(send($socket, $clientHello, 0)) || die "Could *NOT* send ClientHello to $host:$port; $! -> target ignored\n";
             alarm (0);
-        } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {              # End of eval section, begin of an error section ('or do'), that works for Windows, too.
-            $my_error = "send client hello failed: $@";             # save the error message as soon as possible
-            alarm (0);                                              # protection against race conditions
+        } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # end of eval section, begin of an error section ('or do'), that works for Windows, too.
+            $my_error = "send client hello failed: $@";     # save the error message as soon as possible
+            alarm (0);                                      # protection against race conditions
             OSaft::error_handler->new( {
                 type    => (OERR_SSLHELLO_ABORT_HOST),
                 id      => 'send client hello failed',
@@ -2604,17 +3103,17 @@ sub _doCheckSSLciphers ($$$$;$$) {
                 warn    => 0,
             } );
             return ("");
-        }};                                                         # End of the section 'or do { if () { ...'. Do NOT forget the;
-        alarm (0);                                                  # protection against race conditions
+        }};                                                 # end of the section 'or do { if () { ...'. Do NOT forget the;
+        alarm (0);                                          # protection against race conditions
 
         ###### receive the answer (SSL+TLS: ServerHello, DTLS: Hello Verify Request or ServerHello)
-        ###### Errors are reported in local $my_error
-        ($input, $recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error) = _readRecord ($socket, $isUdp, $host, $port, $protocol);
+        ###### errors are reported in local $my_error
+        ($recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error) = _readRecord ($socket, $isUdp, \$input, $host, $port, $protocol);
         # error handling
         if ((OSaft::error_handler->get_err_type()) <= (OERR_SSLHELLO_RETRY_PROTOCOL)) {
             if ((OSaft::error_handler->get_err_type()) == (OERR_SSLHELLO_RETRY_HOST)) { # no more retries
                 OSaft::error_handler->new( {
-                    type     => (OERR_SSLHELLO_ABORT_HOST),         # upgrade error to abort
+                    type     => (OERR_SSLHELLO_ABORT_HOST), # upgrade error to abort
 #                   warn     => 1,
                 } );
             }
@@ -2663,7 +3162,7 @@ sub _doCheckSSLciphers ($$$$;$$) {
         }
         if (length($input) >0) {
             _trace2 ("_doCheckSSLciphers: Total data received: ". length($input). " bytes\n");
-            ($acceptedCipher, $lastMsgType, $dtlsNewCookieLen, $dtlsNewCookie) = parseHandshakeRecord ($host, $port, $recordType, $recordVersion, $recordLen, $recordData, "", $protocol);
+            ($buffer, $lastMsgType, $dtlsNewCookieLen, $dtlsNewCookie, $acceptedCipher) = parseHandshakeRecord ($host, $port, $recordType, $recordVersion, $recordLen, $recordData, "", $protocol);
             if ((OSaft::error_handler->get_err_type()) <= (OERR_SSLHELLO_RETRY_PROTOCOL)) {
                 if ((OSaft::error_handler->get_err_type()) == (OERR_SSLHELLO_RETRY_HOST)) { # no more retries
                     OSaft::error_handler->new( {
@@ -2676,21 +3175,30 @@ sub _doCheckSSLciphers ($$$$;$$) {
             }
 
             if ( ($acceptedCipher ne "") && ($parseAllRecords > 0) && ($lastMsgType != $HANDSHAKE_TYPE {'server_hello_done'}) ) {
-                _trace2 ("_doCheckSSLciphers: Try to get and parse next records\n");
+                _trace4 ("_doCheckSSLciphers: Try to get and parse next records\n");
                 while ( (length($input) >0) && ($lastMsgType != $HANDSHAKE_TYPE {'server_hello_done'}) ) {
                     ###### receive next record
-                    _trace2 ("_doCheckSSLciphers: receive next record\n");
-                    $input = "";
-                    ($input, $recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error) = _readRecord ($socket, $isUdp, $host, $port, $protocol);
+                    _trace4 ("_doCheckSSLciphers: receive next record\n");
+                    $input = $buffer;
+                    $buffer = "";
+                    ($recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error) = _readRecord ($socket, $isUdp, \$input, $host, $port, $protocol);
                     last if ( (length($input)==0) || ($my_error) );
+                    _trace4 ("_doCheckSSLciphers: record type '$recordType' is no handshake record -> stop receiving records\n") if ($recordType ne $RECORD_TYPE{'handshake'});
+#TBD: wieder aktivieren                    last if ($recordType ne $RECORD_TYPE{'handshake'});
+                    last if ($recordType eq $RECORD_TYPE{'application_data'}); ## replace the 'last' command above by this to test or to develop
                     if ( ($lastMsgType == $HANDSHAKE_TYPE {'<<fragmented_message>>'}) && ($recordType == $lastRecordType) ) { # last message was fragmented
-                        $recordData = $buffer.$recordData;
-                        $recordLen += length($buffer);
+                        $recordData = $lastRecordData.$recordData;
+                        $recordLen += length($lastRecordData);
+                        $lastRecordData = "";
                         _trace4 ("_doCheckSSLciphers: recompiled fragmented message -> compiled RecordLen: $recordLen\n");
                     }
                     # parse the next record (no cipher expected...)
-                    ($buffer, $lastMsgType, $dtlsNewCookieLen, $dtlsNewCookie) = parseHandshakeRecord ($host, $port, $recordType, $recordVersion, $recordLen, $recordData, $acceptedCipher, $protocol); # get more information received together with the accepted cipher
+                    ($buffer, $lastMsgType, $dtlsNewCookieLen, $dtlsNewCookie, $dummy) = parseHandshakeRecord ($host, $port, $recordType, $recordVersion, $recordLen, $recordData, $acceptedCipher, $protocol); # get more information received together with the accepted cipher
                     $lastRecordType = $recordType; # only used for fragmented messages
+                    if ($lastMsgType == $HANDSHAKE_TYPE {'<<fragmented_message>>'}) { # last message has been fragmented
+                        $lastRecordData = $buffer;
+                        $buffer = "";
+                    }
                 }
             }
 
@@ -2698,7 +3206,7 @@ sub _doCheckSSLciphers ($$$$;$$) {
                 last;
             }
             if ($my_error ne "") {
-                _trace4 ("_doCheckSSLciphers: Exit with Error: '$my_error'\n");
+                _trace4 ("_doCheckSSLciphers: Exit with error: '$my_error'\n");
                 return ("");
             }
             if ( ($dtlsNewCookieLen > 0) && $isUdp) {
@@ -2753,7 +3261,7 @@ sub _doCheckSSLciphers ($$$$;$$) {
 
 
 ############################################################
-sub _readRecord ($$;$$$$) {
+sub _readRecord ($$$;$$$$) {
     #? receive the answers:
     # Handshake:
     # 1) SSL+TLS: ServerHello, DTLS: Hello Verify Request or ServerHello
@@ -2765,22 +3273,22 @@ sub _readRecord ($$;$$$$) {
     # or Error Messages
     #
 
-    my $socket  = shift || "";
-    my $isUdp   = shift || 0;
-    my $host    = shift || ""; # for warn- and trace-messages
-    my $port    = shift || ""; # for warn- and trace-messages
+    my $socket          = shift || "";
+    my $isUdp           = shift || 0;
+    my $input_ref       = shift;
+    my $host            = shift || ""; # for warn and trace messages
+    my $port            = shift || ""; # for warn and trace messages
     my $client_protocol = shift || -1;  # optional
 
     my $MAXLEN  = 16384; # according RFC 5246: 16384 bytes for the packetData (without the packet header)
     my $pduLen  = 0;     # no PDUlen detected, yet
     my $readLen = ($isUdp) ? $MAXLEN : 7;
         # minimum len is:
-        #    all readable octetts for UDP (-> MAXLEN),
-        #    7 octetts for TCP (=len of an alert message);
+        #    all readable octets for UDP (-> MAXLEN),
+        #    7 octets for TCP (=len of an alert message);
         # remark rk: the minimum record len is 5 bytes, but it is better to
         #            read 7 bytes to get a compete alert message before any
-        #            disconnects can occure #### was: $MAXLEN; # read up to MAXLEN Octetts
-    my $len = 0;
+        #            disconnects can occure #### was: $MAXLEN; # read up to MAXLEN octets
     my $recordType      = 0;
     my $recordVersion   = 0;
     my $recordEpoch     = 0;
@@ -2794,9 +3302,12 @@ sub _readRecord ($$;$$$$) {
     my $alarmTimeout    = $Net::SSLhello::timeout +1; # 1 sec more than normal timeout as a time line of second protection$
     my $retryCnt        = 0;
     my $segmentCnt      = 0;
-    my $input           = "";
+
+    return ($recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error) if (! defined ($input_ref) );
     my $input2          = "";
     my @socketsReady    = ();
+    my $len             = length ($$input_ref);
+
     require IO::Select if ($Net::SSLhello::trace > 0);
     my $select; #used for tracing only
     $select = IO::Select->new if ($Net::SSLhello::trace > 0);
@@ -2804,11 +3315,11 @@ sub _readRecord ($$;$$$$) {
     $select->add($socket) if ($Net::SSLhello::trace > 0);
 
     #reset error_handler and set basic information for this sub
-    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => '_readRecord', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => '_readRecord', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
 
     ###### receive the answer (SSL+TLS: ServerHello, DTLS: Hello Verify Request or ServerHello)
     vec($rin = '',fileno($socket),1 ) = 1; # mark SOCKET in $rin
-    RETRY_TO_RECEIVE_A_RECORD: while ( ( (length($input) < $pduLen) || ($input eq "") ) && ($retryCnt++ <= $Net::SSLhello::retry) ) {
+    RETRY_TO_RECEIVE_A_RECORD: while ( ( (length($$input_ref) < $pduLen) || ($pduLen == 0) ) && ($retryCnt++ <= $Net::SSLhello::retry) ) {
         if ($isUdp) { # #still use select for udp
             $my_error = "";
             local $@ = "";
@@ -2816,7 +3327,7 @@ sub _readRecord ($$;$$$$) {
                 # set alarm and timeout
                 local $SIG{ALRM}= "Net::SSLhello::_timedOut";
                 alarm($alarmTimeout);
-                # opimized with reference to 'https://github.com/noxxi/p5-ssl-tools/blob/master/check-ssl-heartbleed.pl'
+                # opimised with reference to 'https://github.com/noxxi/p5-ssl-tools/blob/master/check-ssl-heartbleed.pl'
                 $success = select($rout = $rin,undef,undef,$Net::SSLhello::timeout);
                 alarm (0); #clear alarm
             } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {          # End of eval section, begin of an error section ('or do'), that works for Windows, too.
@@ -2829,9 +3340,9 @@ sub _readRecord ($$;$$$$) {
                     warn    => 0,
                 } );
                 carp ("_readRecord (udp): $my_error");
-                _trace4 ("_readRecord (udp) from Server '$host:$port' -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+                _trace4 ("_readRecord (udp) from Server '$host:$port' -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
                 last RETRY_TO_RECEIVE_A_RECORD;
-            }};                                                     # End of the section 'or do { if () { ...'. Do NOT forget the;
+            }};                                                     # End of the section 'or do { if () { ...'. Do NOT forget the; => '}};'
             alarm (0);                                              # protection against race conditions
             if ( ! $success) { # nor data NEITHER special event => timeout
                 OSaft::error_handler->new( {
@@ -2840,7 +3351,7 @@ sub _readRecord ($$;$$$$) {
                     message => $my_error,
                     warn    => 0,
                 } );
-                _trace4 ("_readRecord (udp): Server '$host:$port' -> Timeout (received nor data NEITHER special event) while reading a record with".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+                _trace4 ("_readRecord (udp): Server '$host:$port' -> Timeout (received nor data NEITHER special event) while reading a record with".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
                 last RETRY_TO_RECEIVE_A_RECORD; # resend the UDP packet
             }
             if (vec($rout, fileno($socket),1)) { # got data
@@ -2850,8 +3361,8 @@ sub _readRecord ($$;$$$$) {
                     local $SIG{ALRM}= "Net::SSLhello::_timedOut";
                     alarm($alarmTimeout);
                     @socketsReady = $select->can_read(0) if ($Net::SSLhello::trace > 3); ###additional debug (use IO::select needed)
-                    _trace4 ("_readRecord (udp): can read (1): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($input)." bytes)\n") if (scalar (@socketsReady));
-                    $success = sysread ($socket, $input, $readLen - length($input), length($input)); #if NO success: EOF or other Error while reading Data
+                    _trace4 ("_readRecord (udp): can read (1): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($$input_ref)." bytes)\n") if (scalar (@socketsReady));
+                    $success = sysread ($socket, $$input_ref, $readLen - length($$input_ref), length($$input_ref)); #if NO success: EOF or other error while reading Data
                     alarm (0); #clear alarm
                 } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # End of eval section, begin of an error section ('or do'), that works for Windows, too.
                     $my_error = "failed to read data with sysread: $@";     # save the error message as soon as possible
@@ -2863,14 +3374,14 @@ sub _readRecord ($$;$$$$) {
                         warn    => 0,
                     } );
                     carp ("_readRecord (udp): $my_error");
-                    _trace4 ("_readRecord (udp) -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+                    _trace4 ("_readRecord (udp) -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
                     last RETRY_TO_RECEIVE_A_RECORD;                 # resend the UDP packet
-                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the;
+                }};                                                 # End of the section 'or do { if () { ...'. Do NOT forget the; '}};'
                 alarm (0);                                          # protection against race conditions
                 @socketsReady = $select->can_read(0) if ($Net::SSLhello::trace > 3); ###additional debug (use IO::select needed)
-                _trace4 ("_readRecord (udp) can read (2): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($input)." bytes)\n") if (scalar (@socketsReady));
-                if (! $success ) { # EOF or other Error while reading Data
-                    if (length ($input) == 0) { # Disconnected, no Data
+                _trace4 ("_readRecord (udp) can read (2): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($$input_ref)." bytes)\n") if (scalar (@socketsReady));
+                if (! $success ) { # EOF or other error while reading Data
+                    if (length ($$input_ref) == 0) { # Disconnected, no Data
                         $my_error = "Server '$host:$port': received EOF (Disconnect), no Data\n";
                         OSaft::error_handler->new( {
                             type    => (OERR_SSLHELLO_RETRY_CIPHERS),
@@ -2881,7 +3392,7 @@ sub _readRecord ($$;$$$$) {
                         _trace4 ("_readRecord (udp) : $my_error\n");
                         last RETRY_TO_RECEIVE_A_RECORD;
                     } else {
-                        $my_error = "Server '$host:$port': No data (EOF) after ".length($input)." of expected $pduLen bytes: '$!' -> Retry to read\n";
+                        $my_error = "Server '$host:$port': No data (EOF) after ".length($$input_ref)." of expected $pduLen bytes: '$!' -> Retry to read\n";
                         OSaft::error_handler->new( {
                             type    => (OERR_SSLHELLO_RETRY_CIPHERS),
                             id      => '_readRecord (udp): EOF',
@@ -2890,7 +3401,7 @@ sub _readRecord ($$;$$$$) {
                         } );
                         _trace1 ("_readRecord (udp): $my_error\n");
                         @socketsReady = $select->can_read(0) if ($Net::SSLhello::trace > 1); ###additional debug (use IO::select needed)
-                        _trace1 ("_readRecord (udp): can read (3): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($input)." bytes)\n") if (scalar (@socketsReady));
+                        _trace1 ("_readRecord (udp): can read (3): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($$input_ref)." bytes)\n") if (scalar (@socketsReady));
                         #select (undef, undef, undef, _SLEEP_B4_2ND_READ);
                         osaft::osaft_sleep (_SLEEP_B4_2ND_READ);
                         next RETRY_TO_RECEIVE_A_RECORD;
@@ -2905,7 +3416,7 @@ sub _readRecord ($$;$$$$) {
                     warn    => 0,
                 } );
                 _trace1 ("_readRecord (udp): ... Received data: $my_error\n");
-                _trace4 ("_readRecord (udp) :-> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+                _trace4 ("_readRecord (udp) :-> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
                 last RETRY_TO_RECEIVE_A_RECORD;
             } ###  End got Data
         } else { # TCP
@@ -2914,8 +3425,9 @@ sub _readRecord ($$;$$$$) {
                 # set alarm and timeout
                 local $SIG{ALRM}= "Net::SSLhello::_timedOut";
                 alarm($alarmTimeout);
-                _trace4 ("_readRecord (tcp): try to recv (1): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($input)." bytes)\n");
-                $success = recv ($socket, $input2, $readLen - length($input), 0); #if NO success: $success undefined
+                my $_missing_readLen = $readLen - length($$input_ref);
+                _trace4 ("_readRecord (tcp): try to recv (1): (Segement: $segmentCnt, retry: $retryCnt, position: ".length($$input_ref)." bytes, missing Bytes: $_missing_readLen)\n");
+                $success = ($_missing_readLen <= 0) || (recv ($socket, $input2, $readLen - length($$input_ref), 0) ); #if NO success: $success undefined
                 alarm (0); #clear alarm
             } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {          # End of eval section, begin of an error section ('or do'), that works for Windows, too.
                 $my_error = "failed to receive data (recv) $@";     # save the error message as soon as possible
@@ -2927,15 +3439,15 @@ sub _readRecord ($$;$$$$) {
                     warn    => 0,
                 } );
                 carp ("_readRecord (tcp): $my_error");
-                _trace4 ("_readRecord (tcp): recv -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+                _trace4 ("_readRecord (tcp): recv -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
                 last RETRY_TO_RECEIVE_A_RECORD;
-            }};                                                     # End of the section 'or do { if () { ...'. Do NOT forget the;
+            }};                                                     # End of the section 'or do { if () { ...'. Do NOT forget the; => '}};'
             alarm (0);                                              # protection against race conditions
-            $input  .= $input2;                                     # append new input
+            $$input_ref .= $input2;                                 # append new input
             $success = length ($input2);                            # same usage as sysread
-            _trace4 ("_readRecord (tcp): recv: (Segement: $segmentCnt, retry: $retryCnt, position: ".length($input)." bytes)\n");
+            _trace4 ("_readRecord (tcp): recv: (Segement: $segmentCnt, retry: $retryCnt, position: ".length($$input_ref)." bytes)\n");
         } # End TCP
-        $len = length($input);
+        $len = length($$input_ref);
         if ($success) { # got new data
             if ($pduLen == 0) { # no PduLen decoded, yet
                 _trace4 ("_readRecord (tcp): Server '$host:$port': ... Received first $len bytes to detect PduLen\n");
@@ -2944,7 +3456,7 @@ sub _readRecord ($$;$$$$) {
                     ($recordType,       #C (record_type)
                      $recordVersion,    #n (record_version)
                      $recordLen,        #n (record_len)
-                    ) = unpack("C n n", $input); # assuming to parse a SSLv3/TLS record, will be redone if it is SSLv2
+                    ) = unpack("C n n", $$input_ref); # assuming to parse a SSLv3/TLS record, will be redone if it is SSLv2
 
                    if ( ($recordType < 0x80) && (($recordVersion & 0xFF00) == $PROTOCOL_VERSION{'SSLv3'} || $recordVersion == 0x0000) ) {
                         #SSLv3/TLS (no SSLv2 or 'dummy-Version 0x0000' if recoord version is not supported by the server)
@@ -2962,12 +3474,12 @@ sub _readRecord ($$;$$$$) {
                     } else { # Check for SSLv2 (parse the Inpit again)
                         ($recordLen,    # n (V2Len > 0x8000)
                          $recordType,   # C = 0
-                        ) = unpack("n C", $input);
+                        ) = unpack("n C", $$input_ref);
                         if ( ($recordLen > 0x8000) && (($recordType == $SSL_MT_SERVER_HELLO) || ($recordType == $SSL_MT_ERROR)) ) { # SSLv2 check
                             $recordLen     -= 0x8000;
                             $recordHeaderLen = 2; # Message Data starts at position 3
                             $pduLen         = $recordLen + $recordHeaderLen;
-                            $recordVersion  = $PROTOCOL_VERSION{'SSLv2'}; # added the implicitely detected protocol
+                            $recordVersion  = $PROTOCOL_VERSION{'SSLv2'}; # added the implicitly detected protocol
                             _trace2 ("_readRecord (tcp): Server '$host:$port': ... Received data: Expected SSLv2-PDU-Len:");
                         } else { ### no SSL/TLS/DTLS PDU => Last
                             $my_error = "no known SSL/TLS PDU type";
@@ -2975,7 +3487,7 @@ sub _readRecord ($$;$$$$) {
                             $recordVersion  = 0;
                             $recordLen      = 0;
                             _trace1 ("_readRecord (tcp): $my_error\n");
-                            _trace4 ("_readRecord (tcp): -> LAST: received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+                            _trace4 ("_readRecord (tcp): -> LAST: received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
                             last RETRY_TO_RECEIVE_A_RECORD;
                         }
                     }
@@ -2989,10 +3501,10 @@ sub _readRecord ($$;$$$$) {
                      $recordSeqNr_null,   # n (0x0000)
                      $recordSeqNr,        # N
                      $recordLen,          # n
-                    ) = unpack ("C n n n N n", $input);
+                    ) = unpack ("C n n n N n", $$input_ref);
 
                     _trace2_ (sprintf (
-                     "# -->    => DTLS record type: Handshake  (%02X):\n". ### only for handshake records that we analyze, yet
+                     "# -->    => DTLS record type: Handshake  (%02X):\n". ### only for handshake records that we analyse, yet
                      "# -->    record_version:    >%04X<\n".
                      "# -->    record_epoch:      >%04X<\n".        # n
                      "# -->    record_seqNr_null: >%04X<\n".        # n (0x0000)
@@ -3010,10 +3522,10 @@ sub _readRecord ($$;$$$$) {
                         $recordHeaderLen = 13; # record data starts at position 14
                         _trace2 ("_readRecord (udp): Server '$host:$port': ... Received data: Expected DTLS-PDU-Len:");
                     } else {
-                        # isUdp is set, but no DTLS-Record recognized
+                        # isUdp is set, but no DTLS-Record recognised
                         $my_error = "Server '$host:$port': no known DTLS PDU type -> unknown protocol";
                         _trace1 ("_readRecord (udp): $my_error\n");
-                        _trace1 ("_readRecord (udp): -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)", $recordVersion)." with ".length($input)." bytes (from $recordLen expected) after $retryCnt tries: reset all the mentioned parameters to 0\n");
+                        _trace1 ("_readRecord (udp): -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)", $recordVersion)." with ".length($$input_ref)." bytes (from $recordLen expected) after $retryCnt tries: reset all the mentioned parameters to 0\n");
                         $recordType     = 0;
                         $recordVersion  = 0;
                         $recordLen      = 0;
@@ -3030,7 +3542,7 @@ sub _readRecord ($$;$$$$) {
                     carp ("_readRecord: Server '$host:$port': Expected len of the SSL/TLS record ($recordLen) is higher than the maximum ($MAXLEN) -> cut at maximum length!");
                     $pduLen += -$recordLen +$MAXLEN; # => MAXLEN + size of record header
                 }
-                $readLen = $pduLen; # read only pduLen Octetts (-> only by one record)
+                $readLen = $pduLen; # read only pduLen octets (-> only by one record)
                 $retryCnt = 0 if ($readLen > 0); # detection of the recordLen is no retry -> reset counter
             } else {
                 $segmentCnt++;
@@ -3038,57 +3550,43 @@ sub _readRecord ($$;$$$$) {
                 $retryCnt = 0 if ($segmentCnt <= _MAX_SEGMENT_COUNT_TO_RESET_RETRY_COUNT); # reset retry count to 0 (in next loop)
             }
             if (defined ($client_protocol)) {
-                if ($client_protocol != $recordVersion) {
-                    my %rhash = reverse %PROTOCOL_VERSION;
-                    my $ssl_client = $rhash{$client_protocol};
-                    my $ssl_server = $rhash{$recordVersion};
-                    if (! defined $ssl_client) {
-                        $ssl_client = "--unknown protocol--";
-                    }
-                    if (! defined $ssl_server) {
-                        $ssl_server = "--unknown protocol--";
-                    }
-                    if ($recordVersion == 0) { # some servers respond with the dummy protocol '0x0000' if they do *not* support the requested protocol
-                        OSaft::error_handler->new( {
-                            type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
-                            id      => 'check record protocol (1)',
-                            message => sprintf ("unsupported protocol $ssl_client (0x%04X) by $host:$port, answered with (0x%04X)", $client_protocol, $recordVersion),
-                            warn    => 0,
-                        } );
-                    } else { # unknown protocol
-                        OSaft::error_handler->new( {
-                            type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
-                            id      => 'check record protocol (2)',
-                            message => sprintf ("unsupported protocol $ssl_client (0x%04X) by $host:$port, answered with $ssl_server (0x%04X)", $client_protocol, $recordVersion),
-                            warn    => 0,
-                        } );
-                    }
-                    return ($input, $recordType, $recordVersion, 0, "", $recordEpoch, $recordSeqNr);
+                my $client_ssl = $PROTOCOL_NAME_BY_HEX{$client_protocol};
+                if (! defined $client_ssl) {
+                    $client_ssl = "--unknown protocol--";
+                }
+                if ($recordVersion == 0) { # some servers respond with the dummy protocol '0x0000' if they do *not* support the requested protocol
+                    OSaft::error_handler->new( {
+                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
+                        id      => 'check record protocol (1)',
+                        message => sprintf ("unsupported protocol $client_ssl (0x%04X) by $host:$port, answered with (0x%04X)", $client_protocol, $recordVersion),
+                        warn    => 0,
+                    } );
+                    last RETRY_TO_RECEIVE_A_RECORD;
                 }
             }
         }
     } # end while
-    if (!($my_error) && (length($input) < $pduLen) ) { # no error, but the loop did *NOT* get all data within the maximal retries
+    if (!($my_error) && (length($$input_ref) < $pduLen) ) { # no error, but the loop did *NOT* get all data within the maximal retries
         $my_error = "Server '$host:$port': Overrun the maximal number of $retryCnt retries in _readRecord after reading $len of $pduLen expected bytes in the ". $segmentCnt . "th segment; $!";
         _trace1 ("_readRecord ... Error receiving data: $my_error\n");
-        _trace4 ("_readRecord -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes (from $pduLen expected) after $retryCnt tries:\n");
+        _trace4 ("_readRecord -> LAST: Received (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes (from $pduLen expected) after $retryCnt tries:\n");
     }
     chomp ($my_error);
 
     if ($client_protocol >= 0) {
-        _trace3("_readRecord: Server '$host:$port': (expected protocol= >".sprintf ("%04X", $client_protocol)."<,\n      (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes >".hexCodedString (substr($input,0,48),"       ")."< ...)\n");
+        _trace3("_readRecord: Server '$host:$port': (expected protocol= >".sprintf ("%04X", $client_protocol)."<,\n      (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes >".hexCodedString (substr($$input_ref,0,48),"       ")."< ...)\n");
     } else {
-        _trace4("_readRecord: Server '$host:$port': (any protocol, (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($input)." bytes\n       Data=".hexCodedString ($input,"       ").")\n");
+        _trace4("_readRecord: Server '$host:$port': (any protocol, (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)." with ".length($$input_ref)." bytes\n       Data=".hexCodedString ($$input_ref,"       ").")\n");
     }
 
-    ($recordData) = unpack ("x[$recordHeaderLen] a*", $input);  # get recordData from input skipping the header
-    if (length($recordData) != $recordLen) {
+    ($recordData) = unpack ("x[$recordHeaderLen] a*", $$input_ref);  # get recordData with up to $recordLen bytes from input skipping the header
+    if (length($recordData) < $recordLen) {
         _trace1 ("_readRecord: Server '$host:$port': (expected protocol= >".sprintf ("%04X", $client_protocol)."<, (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)
-                .": recordLen ".sprintf ("%04X",length($recordData))." is not equal to the expected value ".sprintf ("%04X",$recordLen). "\n");
+                .": recordLen ".sprintf ("%04X",length($recordData))." is smaller than the expected value ".sprintf ("%04X",$recordLen). "\n");
         carp    ("_readRecord: Server '$host:$port': (expected protocol= >".sprintf ("%04X", $client_protocol)."<, (record) type $recordType, -version: ".sprintf ("(0x%04X)",$recordVersion)
-                .": recordLen ".sprintf ("%04X",length($recordData))." is not equal to the expected value ".sprintf ("%04X",$recordLen). "\n");
+                .": recordLen ".sprintf ("%04X",length($recordData))." is smaller than the expected value ".sprintf ("%04X",$recordLen). "\n");
     }
-    return ($input, $recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error); 
+    return ($recordType, $recordVersion, $recordLen, $recordData, $recordEpoch, $recordSeqNr, $my_error);
 } # _readRecord
 
 
@@ -3118,18 +3616,18 @@ RECEVICE_ANSWER:
             # set alarm and timeout
             local $SIG{ALRM}= "Net::SSLhello::_timedOut";
             alarm($alarmTimeout);
-            # Opimized with reference to 'https://github.com/noxxi/p5-ssl-tools/blob/master/check-ssl-heartbleed.pl'
+            # Opimised with reference to 'https://github.com/noxxi/p5-ssl-tools/blob/master/check-ssl-heartbleed.pl'
             if ( ! select($rout = $rin,undef,undef,$Net::SSLhello::timeout) ) { # Nor data NEITHER special event => Timeout
                 alarm (0); #clear alarm
                 $my_local_error = "Timeout in _readText $!";
                 last RECEVICE_ANSWER;
             }
             alarm (0); #clear alarm
-        } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {              # End of eval section, begin of an error section ('or do'), that works for Windows, too.
+        } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {      # end of eval section, begin of an error section ('or do'), that works for Windows, too.
             $my_local_error = "failed to select text: $@"
-        }};                                                         # End of the section 'or do { if () { ...'. Do NOT forget the;
-        #$my_error .= $@;                                           # save the error message as soon as possible
-        alarm (0);                                                  # protection against race conditions
+        }};                                                 # end of the section 'or do { if () { ...'. Do NOT forget the;
+        #$my_error .= $@;                                   # save the error message as soon as possible
+        alarm (0);                                          # protection against race conditions
         if ($my_local_error) {
             $my_local_error = "_readText: unknown Timeout-Error (1): $my_error";
              carp ("_readText: $my_local_error");
@@ -3141,20 +3639,23 @@ RECEVICE_ANSWER:
                 # set alarm and timeout
                 local $SIG{ALRM}= "Net::SSLhello::_timedOut";
                 alarm($alarmTimeout);
+                my $_missing_readLen = $MAXLEN - length($input);
+                _trace4 ("_readText: try to recv (1): (retry: $retryCnt, position: ".length($input)." bytes, missing Bytes: $_missing_readLen)\n");
                 ## read only up to 5 bytes in the first round, then up to the expected pduLen
-                recv($socket, $input2, $MAXLEN - length($input), 0 );  # EOF or other Error while reading data
+                my $success = ($_missing_readLen <= 0) || (recv($socket, $input2, $MAXLEN - length($input), 0 ) );  # EOF or other error while reading data
                 $input .= $input2;
                 alarm (0); # clear alarm
-            } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {          # End of eval section, begin of an error section ('or do'), that works for Windows, too.
+            } or do { if ( ($@) or ($^O !~ m/MSWin32/) ) {  # end of eval section, begin of an error section ('or do'), that works for Windows, too.
                 $my_error = "failed to receice text: $@"
-            }};                                                     # End of the section 'or do { if () { ...'. Do NOT forget the;
-            #$my_error .= $@;                                        # save the error message as soon as possible
-            alarm (0);                                              # protection against race conditions
+            }};                                             # end of the section 'or do { if () { ...'. Do NOT forget the;
+            #$my_error .= $@;                               # save the error message as soon as possible
+            alarm (0);                                      # protection against race conditions
             if ($my_local_error) {
                 $my_local_error = "_readText unknown Timeout-Error (2): $my_error";
                  carp ("_readText: $my_local_error");
                  last RECEVICE_ANSWER;
             }
+            $len = length($input2);
             if ($len <= 0) { # error no data
                 $my_local_error = "NULL-Len-Data in _readText $!";
                 _trace1 ("_readText: $my_local_error\n");
@@ -3193,13 +3694,21 @@ sub compileClientHello ($$$$;$$$$) {
     my $clientHello_extensions = "";
     my $challenge      = $CHALLENGE; # 16-32 bytes,
     my $i; #counter
-    my %rhash = reverse %PROTOCOL_VERSION;
-    my $ssl   = $rhash{$version};
 
+    my $ssl = $PROTOCOL_NAME_BY_HEX{$version};
+    if (! defined $ssl) {
+        $ssl = "--unknown protocol--";
+    }
     _trace4 (sprintf("compileClientHello (%04X, %04X,\n          >%s<, %s) {\n", $record_version, $version, hexCodedString ($ciphers,"           "), $host) );
 
     $challenge= pack("Na[28]", time(), $challenge); # 4 bytes: uint32 gmt_unix_time;, 28 byte random
     _trace4_("#   --->   challenge >".hexCodedString ($challenge)."<\n");
+
+    my $handshake_version = $version;
+    if ( ($version > $PROTOCOL_VERSION{'TLSv12'}) && ($version < $PROTOCOL_VERSION{'DTLSv12'}) ) {
+        $handshake_version  = $PROTOCOL_VERSION{'TLSv12'};
+        $record_version     = $PROTOCOL_VERSION{'TLSv12'};
+    }
 
     my %clientHello =  ( #V2ClientHello
         'record_type'            => $RECORD_TYPE {'handshake'},# from SSL3:  Handshake (22=0x16) #uint8
@@ -3212,7 +3721,7 @@ sub compileClientHello ($$$$;$$$$) {
         'msg_seqNr'              => 0x0000,                    # DTLS only:  #uint16
         'fragment_offset'        => 0x000000,                  # DTLS only:  #uint24 (!)
         'fragment_len'           => 0x000000,                  # DTLS only:  #uint24 (!)
-        'version'                => $version,                  # SSL2:0x0002,SSL3:0x3000,TLS1:0x0301 #uint16
+        'version'                => $handshake_version,        # SSL2:0x0002,SSL3:0x3000,TLS1:0x0301 #uint16
         'cipher_spec_len'        => length($ciphers),          # uint16
         'session_id_len'         => 0x0000,                    # uint16
         'cookie_len'             => 0x00,                      # DTLS only:  #uint8
@@ -3283,7 +3792,7 @@ sub compileClientHello ($$$$;$$$$) {
 
         $clientHello{'extensions_total_len'} = length($clientHello_extensions);
 
-         _trace4    ("compileClientHello (SSL3/TLS) (1):\n");
+         _trace4 ("compileClientHello (SSL3/TLS) (1):\n");
 
         $clientHello_tmp = pack ("n a[32] C n a[$clientHello{'cipher_spec_len'}] C C[$clientHello{'compression_method_len'}] a[$clientHello{'extensions_total_len'}]",
             $clientHello{'version'},                # n
@@ -3345,20 +3854,20 @@ sub compileClientHello ($$$$;$$$$) {
 
         _trace2_ ( sprintf (
                 "# -->       compression_method_len:  >%02X<\n".
-                "# -->       compression_method:      >%02X<\n".
-                "# -->       extensions_total_len:  >%04X<\n",   #Comma!!
+                "# -->       compression_method:      >%02X<\n",    #Comma!!
                 $clientHello{'compression_method_len'}, # C (0x01)
                 $clientHello{'compression_method'},     # C[1] (0x00)
-                $clientHello{'extensions_total_len'},
         ));
 
-        _trace4_ (
-            sprintf (
-              "#        --->       extensions:      >%s<\n",
-              hexCodedString ($clientHello_extensions),
+        _trace5_ ( sprintf (
+                "#   --->    extensions_total_len:  >%04X<\n".      #Point!!
+                "#   --->    extensions:            >%s<\n",        #Comma!!
+                $clientHello{'extensions_total_len'},
+                hexCodedString ($clientHello_extensions),
             )
         );
 
+        _parseExtensions ("CH", undef, \$clientHello_extensions, -1) if ($Net::SSLhello::trace > 2);  # only for trace purposes; $clientHello_extensions includes the length -> length = '-1' as indicator
         _trace4 (sprintf ("compileClientHello (%04X)\n          >",$record_version).hexCodedString ($clientHello,"           ")."<\n");
 
     } elsif ( (($record_version & 0xFF00) == $PROTOCOL_VERSION{'DTLSfamily'}) || ($version == $PROTOCOL_VERSION{'DTLSv09'})  ) { #DTLS1.x or DTLSv09 (OpenSSL pre 0.9.8f)
@@ -3459,12 +3968,20 @@ sub compileClientHello ($$$$;$$$$) {
 
         _trace2_ ( sprintf (
                 "# -->       compression_method_len:  >%02X<\n".
-                "# -->       compression_method:      >%02X<\n".
-                "# -->       extensions_total_len:  >%04X<\n", #Comma!
+                "# -->       compression_method:      >%02X<\n",    # Comma!!
                 $clientHello{'compression_method_len'},  # C (0x01)
                 $clientHello{'compression_method'},      # C[1] (0x00)
-                $clientHello{'extensions_total_len'},
         ));
+
+        _trace5_ ( sprintf (
+                "#   --->    extensions_total_len:  >%04X<\n".      #Point!!
+                "#   --->    extensions:            >%s<\n",        #Comma!!
+                $clientHello{'extensions_total_len'},
+                hexCodedString ($clientHello_extensions),
+            )
+        );
+
+        _parseExtensions ("CH", undef, \$clientHello_extensions, -1) if ($Net::SSLhello::trace > 2);  # only for trace purposes; $clientHello_extensions includes the length -> length = '-1' as indicator
 
         _trace4 (sprintf ("compileClientHello (%04X)\n          >",$record_version).hexCodedString ($clientHello,"           ")."<\n");
     } else {
@@ -3481,7 +3998,7 @@ sub compileClientHello ($$$$;$$$$) {
         }
         if  ($Net::SSLhello::experimental >0) { # experimental function is are activated
             _trace_("\n");
-            _trace ("compileClientHello: WARNING: Server $host (protocol: $ssl): use of ClintHellos > $Net::SSLhello::max_sslHelloLen bytes did cause some virtual servers to stall in the past. This protection is overridden by '--experimental'");
+            _trace ("compileClientHello: WARNING: Server $host (protocol: $ssl): use of ClientHellos > $Net::SSLhello::max_sslHelloLen bytes did cause some virtual servers to stall in the past. This protection is overridden by '--experimental'");
         } else { # use of experimental functions is not permitted (option is not activated)
             local $my_error = "**WARNING: compileClientHello: Server $host: the ClientHello is longer than $Net::SSLhello::max_sslHelloLen bytes, this caused sometimes virtual servers to stall, e.g. 256 bytes: https://code.google.com/p/chromium/issues/detail?id=245500;\n    Please add '--experimental' to override this protection; -> This time the protocol $ssl is ignored";
             carp ($my_error);
@@ -3501,8 +4018,10 @@ sub compileAlertRecord ($$$$;$$) {
     my $dtls_epoch     = shift || 0; # optional
     my $dtls_sequence  = shift || 0; # optional
     my $alertRecord    = "";         # return value
-    my %rhash = reverse %PROTOCOL_VERSION;
-    my $ssl   = $rhash{$record_version};
+    my $ssl = $PROTOCOL_NAME_BY_HEX{$record_version};
+    if (! defined $ssl) {
+        $ssl = "--unknown protocol--";
+    }
 
     _trace4 ("compileAlertRecord ($host) {\n");
 
@@ -3657,10 +4176,356 @@ sub compileAlertRecord ($$$$;$$) {
     return ($alertRecord);
 } # compileAlertRecord
 
+#? sub subs that compile parts of records, e.g. bytes for extensions ####################
+    #? sub __compile_bytes_* and _compileNextByte, _compileAllBytes
+    #? the following subs use the same set of variables:
+    #? $__pdu_name:        for tracing and warnings: name of the PDU that is parsed, eg. extension
+    #? $__format_ref:      reference to an array including the format of the PDU, %__compile_bytes_subs maps the format names to the sub functions
+    #? $__param_ref:       reference to an array of the values to be compiled
+    #? $__format_pos_ref:  reference to the position in the array $__format_ref->[pos]
+    #? $__param_pos_ref:   reference to the position in the array $__param_ref->[pos]
+    #? $__buffer_ref:      reference to the buffer that stores the compiled PDU
+    #? $__buffer_size:     size of the buffer
+    #? optional:
+    #? $__format_text_ref: reference to an array describing the semantic of the parts of the PDU
+    #? $__indent:          indent for tracing
+    #?
+    #? return($_size):     return the size of the buffer
+    #? use this subs via '%__compile_bytes_subs' a self defined general description for the structure of for PDUs, e.g. tls extensions
 
-############################
+sub __compile_bytes_len1 ($$$$$$;$$) {
+    #? compiles the len1 byte the following value fields
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_size = 0;
+    my $_next_data = "";
+
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_len1 for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    $$__format_pos_ref++;                                           # Next format element
+    $_size = _compileAllBytes ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, \$_next_data, $__format_text_ref, $__indent);
+    my $__len = length ($_next_data);
+    _trace4_ (_decode_val ("%02X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (len1)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_len1 for '$__pdu_name': Length $__len too big\n") if ($__len > 0xFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("C a*",
+            $__len,                                                 #C
+            $_next_data,                                            #a[$len]
+        );
+    $_size += 1;
+    return ($_size);
+}
+
+sub __compile_bytes_len2 ($$$$$$;$$) {
+    #? compiles the len2 bytes the following value fields
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_size = 0;
+    my $_next_data = "";
+
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_len2 for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    $$__format_pos_ref++;                                           # Next format element
+    $_size = _compileAllBytes ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, \$_next_data, $__format_text_ref, $__indent);
+    my $__len = length ($_next_data);
+    _trace4_ (_decode_val ("%04X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (len2)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_len2 for '$__pdu_name': Length $__len too big\n") if ($__len > 0xFFFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("n a*",
+            $__len,                                                 #n
+            $_next_data,                                            #a[$len]
+        );
+    $_size += 2;
+    return ($_size);
+}
+
+sub __compile_bytes_len3 ($$$$$$;$$) {
+    #? compiles the len3 bytes the following value fields
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_size = 0;
+    my $_next_data = "";
+
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_len3 for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    $$__format_pos_ref++;                                           # Next format element
+    $_size = _compileAllBytes ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, \$_next_data, $__format_text_ref, $__indent);
+    my $__len  = length ($_next_data);
+    my $__len1 = $__len >> 16;
+    my $__len2 = $__len & 0xFFFF;
+    _trace4_ (_decode_val ("%06X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (len3)\n");
+    carp ("**WARNING: SSLhello::_compile_bytes_len3 for '$__pdu_name': Length $__len too big\n") if ($__len > 0xFFFFFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("C n a*",
+            $__len1,                                                #C
+            $__len2,                                                #n
+            $_next_data,                                            #a*
+        );
+    $_size += 3;
+    return ($_size);
+}
+
+sub __compile_bytes_raw ($$$$$$;$$) {
+    #? compiles a raw bytes value field
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_size = 0;
+
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_raw  for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    return (0) if (! defined ($__param_ref->[$$__param_pos_ref]) ); # no value
+    my $__val = $__param_ref->[$$__param_pos_ref++];
+    _trace4_ (_decode_val ("", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n", " | ", " / ") . " (raw)\n");
+    $$__buffer_ref .= pack ("a*",
+            $__val,                                                 #a*
+        );
+    $_size = length ($__val);
+    return ($_size);
+}
+
+sub __compile_bytes_sequence ($$$$$$;$$) {
+    #? compiles a sequence of fields
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size               = 0;
+    my $_sequence_data      = "";
+    my $_sequence_param_pos = 0;
+    my $_sequence_param_list_ref;
+
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_sequence for '$__pdu_name' ($$__format_pos_ref, $$__param_pos_ref)\n");
+    _trace4_ (_decode_val (undef, undef, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent + 3, ":\n" . " " x ($__indent + 3), ",\n" . " " x ($__indent + 3), " | ", " / ") );
+    _trace5_ ("\n");
+    $$__format_pos_ref++;                                           # Next format element
+    my $_sequence_format_pos = $$__format_pos_ref;                  # store start position of sequence
+    $__indent += 3;
+    while (defined ($__param_ref->[$$__param_pos_ref]) ) {
+        $_sequence_param_list_ref = \@{$__param_ref->[$$__param_pos_ref]};
+        _trace5_ (" " x $__indent);
+        _trace4_ ("sequence parameter for '$__pdu_name':\n" . _decode_val (undef, $_sequence_param_list_ref, undef, $__indent + 3, $__indent + 3, ":\n" . " " x ($__indent + 3), ",\n" . " " x ($__indent + 3), " | ", " / ") . "\n");
+        $$__format_pos_ref      = $_sequence_format_pos;            # reset format_pos to first element of sequence format
+        $_sequence_param_pos    = 0;                                # reset to first Element of $_sequence_param_list
+        $_sequence_data         = "";                               # reset sequence_data
+        $_size += _compileAllBytes ($__pdu_name, $__format_ref, $_sequence_param_list_ref, $__format_pos_ref, \$_sequence_param_pos, \$_sequence_data, $__format_text_ref, $__indent);
+        $$__buffer_ref .= $_sequence_data;                          # add sequence data to _data
+        _trace4_ (" " x $__indent);
+        _trace4_ ("=> size of sequence(s) for '$__pdu_name': " . _sprintf_hex_val ("%04X", \$_size, $__indent) ."\n" );
+        $$__param_pos_ref++;
+    }
+    return ($_size);
+}
+
+sub __compile_bytes_size1 ($$$$$$;$$) {
+    #? compiles the size1 byte the following value field
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_size = 0;
+    my $_next_data = "";
+
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_size1 for '$__pdu_name'    ($$__format_pos_ref, $$__param_pos_ref)\n");
+    $$__format_pos_ref++;                                           # Next format element
+    $_size = _compileNextByte ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, \$_next_data, $__format_text_ref, $__indent);
+    _trace4_ (_decode_val ("%02X", \$_size, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (size1)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_size1 for '$__pdu_name': Length $_size too big\n") if ($_size > 0xFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("C a*",
+            $_size,                                                 #C
+            $_next_data,                                            #a[$len]
+        );
+    $_size += 1;
+    return ($_size);
+}
+
+sub __compile_bytes_size2 ($$$$$$;$$) {
+    #? compiles the size2 bytes the following value field
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    my $_next_data = "";
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_size2 for '$__pdu_name'    ($$__format_pos_ref, $$__param_pos_ref)\n");
+    $$__format_pos_ref++;                                           # Next format element
+    $_size = _compileNextByte ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, \$_next_data, $__format_text_ref, $__indent);
+    _trace4_ (_decode_val ("%04X", \$_size, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (size2)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_size2 for '$__pdu_name': Length $_size too big\n") if ($_size > 0xFFFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("n a*",
+            $_size,                                                 #n
+            $_next_data,                                            #a[$len]
+        );
+    $_size += 2;
+    return ($_size);
+}
+
+sub __compile_bytes_val1 ($$$$$$;$$) {
+    #? compiles a val1 byte value field
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_val1 for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    return (0) if (! defined ($__param_ref->[$$__param_pos_ref]) ); # no value
+    my $__val = $__param_ref->[$$__param_pos_ref++];
+    _trace4_ (_decode_val ("%02X", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (val1)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_val1 for '$__pdu_name': value $__val too big\n") if ($__val > 0xFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("C",
+            $__val,                                                 #C
+        );
+    $_size += 1;
+    return ($_size);
+}
+
+sub __compile_bytes_val2 ($$$$$$;$$) {
+    #? compiles a val2 bytes value field
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_val2 for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    return (0) if (! defined ($__param_ref->[$$__param_pos_ref]) ); # no value
+    my $__val = $__param_ref->[$$__param_pos_ref++];
+    _trace4_ (_decode_val ("%04X", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (val2)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_val2 for '$__pdu_name': value $__val too big\n") if ($__val > 0xFFFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("n",
+            $__val,                                                 #n
+        );
+    $_size += 2;
+    return ($_size);
+}
+
+sub __compile_bytes_val4 ($$$$$$;$$) {
+    #? compiles a val4 bytes value field
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_val4 for '$__pdu_name'     ($$__format_pos_ref, $$__param_pos_ref)\n");
+    return (0) if (! defined ($__param_ref->[$$__param_pos_ref]) ); # no value
+    my $__val = $__param_ref->[$$__param_pos_ref++];
+    _trace4_ (_decode_val ("%04X", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . " (val4)\n");
+    carp ("**WARNING: SSLhello::__compile_bytes_val4 for '$__pdu_name': value $__val too big\n") if ($__val > 0xFFFFFFFF); ### TBD: add WARNING Nr
+    $$__buffer_ref .= pack ("N",
+            $__val,                                                 #N
+        );
+    $_size += 4;
+    return ($_size);
+}
+
+sub __compile_bytes_val1List ($$$$$$;$$) {
+    #? compiles a value list of val1 bytes
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_val1List for '$__pdu_name' ($$__format_pos_ref, $$__param_pos_ref)\n");
+    return (0) if (! defined ($__param_ref->[$$__param_pos_ref]) ); # no value
+    my @__list = @{$__param_ref->[$$__param_pos_ref++]};
+    _trace4_ (_decode_val ("%02X", \@__list, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x ($__indent + 2), " | ", " / ") . " (val1List)\n");
+    $$__buffer_ref .= pack ("C" x (@__list),
+            @__list,                                                  #C
+        );
+    $_size += (@__list);
+    return ($_size);
+}
+
+sub __compile_bytes_val2List ($$$$$$;$$) {
+    #? compiles a value list of val2 bytes
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    _trace4_ (" " x $__indent . "# SSLhello: __compile_bytes_val2List for '$__pdu_name' ($$__format_pos_ref, $$__param_pos_ref)\n");
+    return (0) if (! defined ($__param_ref->[$$__param_pos_ref]) ); # no value
+    my @__list = @{$__param_ref->[$$__param_pos_ref++]};
+    _trace4_ (_decode_val ("%04X", \@__list, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x ($__indent + 2), " | ", " / ") . " (val2List)\n");
+    $$__buffer_ref .= pack ("n" x (@__list),
+            @__list,                                                  #n
+        );
+    $_size += 2 * (@__list);
+    return ($_size);
+}
+
+#? Hash with all subs __compile_bytes_*
+#? A self defined general description for the structure of for PDUs, e.g. tls extensions:
+#? len1:     Len of the next bytes, coded in 1 byte      (-> max 0xFF)
+#? len2:     Len of the next bytes, coded in 2 bytes     (-> max 0xFFFF)
+#? len3:     Len of the next bytes, coded in 3 bytes     (-> max 0xFFFFFF)
+#? size1:    Size of the next value, coded in 1 byte     (-> max 0xFF)
+#? size2:    Size of the next value, coded in 2 bytes    (-> max 0xFFFF)
+#? val1:     value, coded in 1 byte                      (-> max 0xFF)
+#? val2:     value, coded in 2 bytes                     (-> max 0xFFFF)
+#? val4:     value, coded in 4 byters                    (-> max 0xFFFFFFFF)
+#? val1List: List of value, coded in 1 byte              (-> max 0xFF, 0xFF, ...)
+#? val2List: List of value, coded in 2 bytes             (-> max 0xFFFF, 0xFFFF, ...)
+#? raw:      Raw bytes (number needs to be previously defined by a len or size element)
+#? sequence: Sequence of structured elements that form lists of compound values
+my %__compile_bytes_subs = (
+    len1        => \&__compile_bytes_len1,
+    len2        => \&__compile_bytes_len2,
+    len3        => \&__compile_bytes_len3,
+    raw         => \&__compile_bytes_raw,
+    sequence    => \&__compile_bytes_sequence,
+    size1       => \&__compile_bytes_size1,
+    size2       => \&__compile_bytes_size2,
+    val1        => \&__compile_bytes_val1,
+    val2        => \&__compile_bytes_val2,
+    val4        => \&__compile_bytes_val4,
+    val1List    => \&__compile_bytes_val1List,
+    val2List    => \&__compile_bytes_val2List,
+);
+
+
+sub _compileNextByte ($$$$$$;$$) {
+    #? compiles the next byte(s) to a PDU, e.g. extension
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_size = 0;
+    return (0) if (! defined ($__format_ref->[$$__format_pos_ref]) );
+    if ($__compile_bytes_subs{$__format_ref->[$$__format_pos_ref]}) {
+        $_size = $__compile_bytes_subs{$__format_ref->[$$__format_pos_ref]}->($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref, $__format_text_ref, $__indent);
+        _trace5_ ("\n");
+    } else {
+        carp ("**WARNING: SSLhello::Net::_compileNextByte  for '$__pdu_name': \'No such format sub: $__format_ref->[$$__format_pos_ref]\', => Please verify hash 'CH'-format definition in osaft.pm e.g. in \%TLS_EXTENSIONS");
+    }
+    _trace4_ (" " x ($__indent + 3). "# SSLhello: _CompileNextByte for '$__pdu_name' ->" . _sprintf_hex_val ("", $__buffer_ref, ($__indent + 31)) ."\n" );
+    $$__format_pos_ref++;                                           # Next format element
+    return ($_size);
+}
+
+sub _compileAllBytes ($$$$$$;$$) {
+    #? compile all byte(s) according the $__format_ref and the $__param_ref to a PDU, e.g. extension
+    my ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    my $_size = 0;
+    while (defined ($__format_ref->[$$__format_pos_ref]) ) {        # $$__format_pos_ref is increased by _compileNextByte and subs '__compile_bytes_*'
+        $_size += _compileNextByte ($__pdu_name, $__format_ref, $__param_ref, $__format_pos_ref, $__param_pos_ref, $__buffer_ref, $__format_text_ref, $__indent);
+    }
+    return ($_size);
+}
+
+#? END of: sub subs that compile parts of records, e.g. bytes for extensions ####################
+
+
 sub _compileClientHelloExtensions ($$$$@) {
-    #? FIXME: <<description missing>>
+    #? compile all ClientHello extensions according $Net::SSLhello::extensions_by_prot->{$ssl},
+    #? protocol version and some other global parameters:
+    #?      $Net::SSLhello::force_TLS_extensions
+    #?      $Net::SSLhello::usereneg
+    #?      $Net::SSLhello::double_reneg
+    #?      $Net::SSLhello::usesni
+    #?      $Net::SSLhello::sni_name
+    #?      $Net::SSLhello::use_sni_name
+    #?      %osaft::TLS_EXTENSIONS defines and describes the extensions (add there new extensions if needed)
+    #?      $Net::SSLhello::extensions_params_hash{$_extension}: temporary parameters defined for an extension if not empty
+    #?
+    #?      return ($clientHello_extensions): returns all compiled extensions headed by the total length
+    #? ---------------------------------------------------------------------------
     my ($record_version, $version, $ciphers, $host, %clientHello) = @_;
     #my $record_version    = shift || "";
     #my $version    = shift || "";
@@ -3668,201 +4533,742 @@ sub _compileClientHelloExtensions ($$$$@) {
     #my $host = shift || "";
     #my (%clientHello) = @_;
     my $clientHello_extensions = "";
-    my %rhash = reverse %PROTOCOL_VERSION;
-    my $ssl   = $rhash{$version};
+
+    my $ssl = $PROTOCOL_NAME_BY_HEX{$version};
+    if (! defined $ssl) {
+        $ssl = "--unknown protocol--";
+    }
+    my $_ext_format_pos     = 0;
+    my $_ext_param_pos      = 0;
+    my $_extensions_data    = "";
+    my $_extensions_params_ref;
 
     if ( ( ($version == $PROTOCOL_VERSION{'SSLv3'}) && (!$Net::SSLhello::force_TLS_extensions) ) || ($version == $PROTOCOL_VERSION{'SSLv2'}) ) { # prevent to not to use tls extensions with SSLv2 or SSLv3
         _trace2 ("compileClientHelloExtensions: Protocol $ssl does not support TLS extensions including SNI -> no extension added\n");
         return ("");
     }
 
-    # ggf auch prüfen, ob Host ein DNS-Name ist
-    if ($Net::SSLhello::usesni) { # allow to test SNI (with version TLSv1 and above or DTLSv09 (OpenSSL pre 0.9.8f), DTLSv1 and above)
-    ### data for extension 'Server Name Indication' in reverse order
-        $Net::SSLhello::sni_name =~ s/\s*(.*?)\s*\r?\n?/$1/gx if ($Net::SSLhello::sni_name);     # delete Spaces, \r and \n
-        $Net::SSLhello::use_sni_name = 1 if ( ($Net::SSLhello::use_sni_name == 0) && ($Net::SSLhello::sni_name) && ($Net::SSLhello::sni_name ne "1") ); ###FIX: quickfix until migration of o-saft.pl is compleated (tbd)
-        unless ($Net::SSLhello::use_sni_name) {
-            $clientHello{'extension_sni_name'}     = $host;                                      # Server Name, should be a Name no IP
-        } else {
-            $clientHello{'extension_sni_name'}     = ($Net::SSLhello::sni_name) ? $Net::SSLhello::sni_name : ""; # Server Name, should be a Name no IP
-        }
-        $clientHello{'extension_sni_len'}          = length($clientHello{'extension_sni_name'}); # len of server name
-        $clientHello{'extension_sni_type'}         = 0x00;                                       # 0x00= host_name
-        $clientHello{'extension_sni_list_len'}     = $clientHello{'extension_sni_len'} + 3;      # len of server name + 3 bytes (sni_len, sni_type)
-        $clientHello{'extension_len'}              = $clientHello{'extension_sni_list_len'} + 2; # len of this extension = sni_list_len + 2 bytes (sni_list_len)
-        $clientHello{'extension_type_server_name'} = 0x0000;                                     # 0x0000
-#        $clientHello{'extensions_total_len'}       = $clientHello{'extension_len'} + 4;          # war +2 len server name extension + 2 bytes (extension_type) #??? +4?!!##
-
-        $clientHello_extensions = pack ("n n n C n a[$clientHello{'extension_sni_len'}]",
-            $clientHello{'extension_type_server_name'}, #n
-            $clientHello{'extension_len'},              #n
-            $clientHello{'extension_sni_list_len'},     #n
-            $clientHello{'extension_sni_type'},         #C
-            $clientHello{'extension_sni_len'},          #n
-            $clientHello{'extension_sni_name'},         #a[$clientHello{'extension_sni_len'}]
-        );
-        _trace2 ("compileClientHelloExtensions ($ssl): extension_sni_name extension added (name='$clientHello{'extension_sni_name'}', len=$clientHello{'extension_sni_len'})\n");
-    } else {
-        _trace2 ("compileClientHelloExtensions ($ssl): NO extension_sni_name extension added\n");
-    }
     if ($Net::SSLhello::usereneg) { # use secure Renegotiation
         my $anzahl = int length ($clientHello{'cipher_spec'}) / 2;
         my @cipherTable = unpack("a2" x $anzahl, $clientHello{'cipher_spec'});
-        unless ( ($Net::SSLhello::double_reneg == 0) && (grep {/\x00\xff/x} @cipherTable) ) { # Protection against double renegotiation info is active
+        unless ( ($Net::SSLhello::double_reneg == 0) && (grep {/\x00\xff/x} @cipherTable) ) {       # Protection against double renegotiation info is active
             # do *NOT* send a reneg_info extension if the cipher_spec includes already Signalling Cipher Suite Value (SCSV)
             # "TLS_EMPTY_RENEGOTIATION_INFO_SCSV" {0x00, 0xFF}
-
-            ### data for extension 'renegotiation_info'
-            $clientHello{'extension_type_renegotiation_info'} = 0xff01; # Tbd: hier, oder zentrale Definition?!
-            $clientHello{'extension_reneg_len'}               = 0x0001; # Tbd: hier, oder zentrale Definition?!
-            $clientHello{'extension_reneg_info_ext_len'}      = 0x00;   # Tbd: hier, oder zentrale Definition?!
-
-            $clientHello_extensions .= pack ("n n c",
-                $clientHello{'extension_type_renegotiation_info'},      #n = 0xff01
-                $clientHello{'extension_reneg_len'},                    #n = 0x0001
-                $clientHello{'extension_reneg_info_ext_len'},           #c = 0x00
-            );
-            _trace2 ("compileClientHelloExtensions ($ssl): reneg_info Extension added\n");
+            if (!grep {/^renegotiation_info$/x} @{$Net::SSLhello::extensions_by_prot->{$ssl}}) {    # renegotiation_info not listed as extension, yet
+                unshift @{$Net::SSLhello::extensions_by_prot->{$ssl}}, 'renegotiation_info';        # Add renegotiation_info extension as 1st extension
+            }
+            _trace2 ("compileClientHelloExtensions ($ssl): extension renegotiation_info will be added\n");
         } else {
-            _trace2 ("compileClientHelloExtensions ($ssl): *NOT* sent a reneg_info Extension as the cipher_spec includes already the Signalling Cipher Suite Value (TLS_EMPTY_RENEGOTIATION_INFO_SCSV {0x00, 0xFF})\n");
+            _trace2 ("compileClientHelloExtensions ($ssl): Extension renegotiation_info will *NOT* be sent as the cipher_spec includes already the Signalling Cipher Suite Value (TLS_EMPTY_RENEGOTIATION_INFO_SCSV {0x00, 0xFF})\n");
+            @{$Net::SSLhello::extensions_by_prot->{$ssl}} = grep { $_ ne 'renegotiation_info' } @{$Net::SSLhello::extensions_by_prot->{$ssl}}; # delete all extension elements 'renegotiation_info' for this protocol
         }
     }
 
-    # extension_type_signature_algorithms
-    if (    ($Net::SSLhello::use_signature_alg >1)
-        || (($Net::SSLhello::use_signature_alg >0)
-            && (   (($record_version >= $PROTOCOL_VERSION{'TLSv12'})     && ($record_version  < $PROTOCOL_VERSION{'DTLSfamily'}))
-                || (($record_version >= $PROTOCOL_VERSION{'DTLSfamily'}) && ($record_version <= $PROTOCOL_VERSION{'DTLSv12'}))
-            )
-        ) ) {
-        # use_signature_alg: 0 (off), 1(auto on if >=TLSv1.2, >=DTLS1.2), 2: always on
-        ### data for extension 'signature_algorithms'
-        $clientHello{'extension_type_signature_algorithms'}   = 0x000d; ##TBD hier, oder zentrale Definition?!
-        $clientHello{'extension_hash_algorithms_list'}        = ""
-            ."\x06\x01\x06\x02\x06\x03"                                 #SHA512: RSA/DSA/ECDSA
-            ."\x05\x01\x05\x02\x05\x03"                                 #SHA384: RSA/DSA/ECDSA
-            ."\x04\x01\x04\x02\x04\x03"                                 #SHA256: RSA/DSA/ECDSA
-            ."\x03\x01\x03\x02\x03\x03"                                 #SHA224: RSA/DSA/ECDSA
-            ."\x02\x01\x02\x02\x02\x03"                                 #SHA1:   RSA/DSA/ECDSA
-            ."";
-        $clientHello{'extension_hash_algorithms_list_len'}    = length ($clientHello{'extension_hash_algorithms_list'}); #30 = 0x1E
-        $clientHello{'extension_signature_algorithms_len'}    = $clientHello{'extension_hash_algorithms_list_len'} + 2;  #32 = 0x20
-
-        $clientHello_extensions .= pack ("n n n a[$clientHello{'extension_hash_algorithms_list_len'}]",
-            $clientHello{'extension_type_signature_algorithms'},        #n = 0x001d
-            $clientHello{'extension_signature_algorithms_len'},         #n
-            $clientHello{'extension_hash_algorithms_list_len'},         #n
-            $clientHello{'extension_hash_algorithms_list'},             #a[$clientHello{'extension_hash_algorithms_list_len'}]
-        );
-        _trace2 ("compileClientHelloExtensions ($ssl): signature_algorithms Extension added\n");
+    # TBD: optional check if $host is a name and no IP
+    if ($Net::SSLhello::usesni) {                                   # allow to test SNI (with version TLSv1 and above or DTLSv09 (OpenSSL pre 0.9.8f), DTLSv1 and above)
+    ### data for extension 'Server Name Indication' in reverse order
+        $Net::SSLhello::sni_name =~ s/\s*(.*?)\s*\r?\n?/$1/gx if ($Net::SSLhello::sni_name);        # delete spaces, \r and \n
+        $Net::SSLhello::use_sni_name = 1 if ( ($Net::SSLhello::use_sni_name == 0) && ($Net::SSLhello::sni_name) && ($Net::SSLhello::sni_name ne "1") ); ###FIX: quickfix until migration of o-saft.pl is compleated (TBD)
+        unless ($Net::SSLhello::use_sni_name) {
+            $clientHello{'extension_sni_name'}     = $host;                                         # Server Name, should be a Name no IP
+        } else {
+            $clientHello{'extension_sni_name'}     = ($Net::SSLhello::sni_name) ? $Net::SSLhello::sni_name : ""; # Server Name, should be a Name no IP
+        }
+        _trace2 ("compileClientHelloExtensions ($ssl): extension server_name for '$clientHello{'extension_sni_name'}' will be added\n");
+        $osaft::TLS_EXTENSIONS{server_name}{DEFAULT}[0][1] = $clientHello{'extension_sni_name'};    # add servername as 2nd parameter of first sequence element; TBD: move to {$cfg}....
+        if (!grep {/^server_name$/x} @{$Net::SSLhello::extensions_by_prot->{$ssl}}) {               # sni_name not listed as extension, yet
+            unshift @{$Net::SSLhello::extensions_by_prot->{$ssl}}, 'server_name';                   # Add sni_name extension as 1st extension
+        }
+    } else {
+        _trace2 ("compileClientHelloExtensions ($ssl): NO server_name extension will be added\n");
+        @{$Net::SSLhello::extensions_by_prot->{$ssl}} = grep { $_ ne 'server_name' } @{$Net::SSLhello::extensions_by_prot->{$ssl}}; # delete all extension elements 'sni_name' for this protocol
     }
 
-    # extension elliptic_curves
-    my $anzahl = int length ($clientHello{'cipher_spec'}) / 2;
-    my @cipherTable = unpack("a2" x $anzahl, $clientHello{'cipher_spec'});
+    my $_indent = 6;                                                # for trace
+    _trace4_ (" " x $_indent . "Compile extensions ($ssl):\n");
+    foreach my $_extension (@{$Net::SSLhello::extensions_by_prot->{$ssl}}) {
+        $_indent = 6;                                               # reset $_indent
+        _trace4_ (" " x $_indent . "extension '$_extension':\n");
+        $_extensions_data = "";
+        if (defined $osaft::TLS_EXTENSIONS{$_extension}) {
+            _trace4_(" " x $_indent . "ID = ($osaft::TLS_EXTENSIONS{$_extension}{ID}: CH:");
+            if (@{$osaft::TLS_EXTENSIONS{$_extension}{CH}}) {
+                for (my $nr = 0; $nr < (@{$osaft::TLS_EXTENSIONS{$_extension}{CH}}); $nr++) {
+                    _trace4_ (", ") if $nr > 0;
+                    _trace4_ ("$osaft::TLS_EXTENSIONS{$_extension}{CH}[$nr]");
+                }
+                _trace5_ ("\n" . " " x $_indent . "#  ---> Use temporary defined parameters for extension '$_extension': ". exists ($Net::SSLhello::extensions_params_hash{$_extension}));
+                $_extensions_params_ref = (exists ($Net::SSLhello::extensions_params_hash{$_extension})) ? \@{$Net::SSLhello::extensions_params_hash{$_extension}}: \@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}}; # use special params for this extension if defined
+                _trace4_ (" (");
+                if (@$_extensions_params_ref)  {
+#                    _trace5_ ("\n");
+                    for (my $nr = 0; $nr < (@$_extensions_params_ref); $nr++) {
+                        my $val = $_extensions_params_ref->[$nr];
+                        _trace5_ ("\n" . " " x ($_indent + 2));
+                        _trace4_ (_decode_val (undef, \$val, undef, 0, ($_indent + 2) , ":\n" . " " x ($_indent + 2), ", ", " | ", " / ")); #TBD: Check
+                    }
+                }
+                _trace4_ (")):\n");
+                $_ext_format_pos     = 0;
+                $_ext_param_pos      = 0;
+                $_indent            += 3;                           # for trace
+                _trace5_(" " x $_indent . _sprintf_hex_val ("ID: 0x%04X", \$osaft::TLS_EXTENSIONS{$_extension}{ID}, $_indent + 3) . "\n");
+                $_extensions_data = pack ("n",
+                    $osaft::TLS_EXTENSIONS{$_extension}{ID},        #n
+                );
+                _compileAllBytes ($_extension, \@{$osaft::TLS_EXTENSIONS{$_extension}{CH}}, $_extensions_params_ref, \$_ext_format_pos, \$_ext_param_pos, \$_extensions_data, \@{$osaft::TLS_EXTENSIONS{$_extension}{CH_TEXT}}, $_indent + 3);
+                _trace5_ (" " x ($_indent  + 3). _sprintf_hex_val ("", \$_extensions_data, ($_indent + 6)) . " " x ($_indent). ")\n" );
 
-    # send always ECC extensions if not switched off manually
-    #if ( grep(/\xc0./, @cipherTable) || 1==1 ) {           # found cipher C0xx, lazy check; ### TBD: check with a range of ECC-ciphers ###
-        if ($Net::SSLhello::useecc) {                       # use Elliptic Curves Extension
-            ### Data for Extension 'elliptic_curves' (in reverse order)
-            $clientHello{'extension_ecc_list'} = ""         # TBD: should be altered to get all supported ECurves (not only the primary
-#                # disable one line after the other to find manually the secondary, tertiary etc curve
-#                 ."\x00\x00" # 0x0000 (Unassigned_0)       ## disabled by default
-                 ."\x00\x01" # 0x0001 (sect163k1)
-                 ."\x00\x02" # 0x0002 (sect163r1)
-                 ."\x00\x03" # 0x0003 (sect163r2)
-                 ."\x00\x04" # 0x0004 (sect193r1)
-                 ."\x00\x05" # 0x0005 (sect193r2)
-                 ."\x00\x06" # 0x0006 (sect233k1)
-                 ."\x00\x07" # 0x0007 (sect233r1)
-                 ."\x00\x08" # 0x0008 (sect239k1)
-                 ."\x00\x09" # 0x0009 (sect283k1)
-                 ."\x00\x0a" # 0x000a (sect283r1)
-                 ."\x00\x0b" # 0x000b (sect409k1)
-                 ."\x00\x0c" # 0x000c (sect409r1)
-                 ."\x00\x0d" # 0x000d (sect571k1)
-                 ."\x00\x0e" # 0x000e (sect571r1)
-                 ."\x00\x0f" # 0x000f (secp160k1)
-                 ."\x00\x10" # 0x0010 (secp160r1)
-                 ."\x00\x11" # 0x0011 (secp160r2)
-                 ."\x00\x12" # 0x0012 (secp192k1)
-                 ."\x00\x13" # 0x0013 (secp192r1)
-                 ."\x00\x14" # 0x0014 (secp224k1)
-                 ."\x00\x15" # 0x0015 (secp224r1)
-                 ."\x00\x16" # 0x0016 (secp256k1)
-                 ."\x00\x17" # 0x0017 (secp256r1)           ## => common default curve
-                 ."\x00\x18" # 0x0018 (secp384r1)
-                 ."\x00\x19" # 0x0019 (secp512r1)
-                 ."\x00\x1a" # 0x001a (brainpoolP256r1)
-                 ."\x00\x1b" # 0x001b (brainpoolP384r1)
-                 ."\x00\x1c" # 0x001c (brainpoolP512r1)
-                 ."\x00\x1d" # 0x001d (ecdh_x25519)
-                 ."\x00\x1e" # 0x001e (ecdh_x25519)
-                 ."\x00\x1f" # 0x001f (eddsa_ed25519)       ## Signature curves, vanished in  https://tools.ietf.org/html/draft-ietf-tls-tls13-12
-                 ."\x00\x20" # 0x0020 (eddsa_ed448)         ## Signature curves, vanished in  https://tools.ietf.org/html/draft-ietf-tls-tls13-12
-                 ."";   # ALL defined ECCs; TBD: move general list to osaft.pl TBD
-            $clientHello{'extension_ecc_list_len'}            = length($clientHello{'extension_ecc_list'}); # len of ECC List
-            $clientHello{'extension_elliptic_curves_len'}     = $clientHello{'extension_ecc_list_len'}+2;   # len of ECC Extension
-            $clientHello{'extension_type_elliptic_curves'}    = 0x000a; # Tbd: hier, oder zentrale Definition?!
-
-            $clientHello_extensions .= pack ("n n n a[$clientHello{'extension_ecc_list_len'}]",
-              $clientHello{'extension_type_elliptic_curves'},         #n    = 0x000a
-              $clientHello{'extension_elliptic_curves_len'},          #n    = 0x00xz
-              $clientHello{'extension_ecc_list_len'},                 #n    = 0x00xy
-              $clientHello{'extension_ecc_list'},                     #a[$clientHello{'extension_ecc_list_len'}] = 0x00....
-            );
-            _trace2 ("compileClientHelloExtensions ($ssl): elliptic_curve Extension added\n");
+                _trace5_ ("------------- show the compiled extension --------------\n");
+                _parseExtensions ("CH", undef, \$_extensions_data, length($_extensions_data)) if ($Net::SSLhello::trace > 4);  # only for trace purposes
+                 $clientHello_extensions .= $_extensions_data;
+            }
+            _trace4_ ("\n");
         }
-
-        if ($Net::SSLhello::useecpoint ) { # use Elliptic Point Formats Extension
-            ### Data for Extension 'ec_point_formats'
-            $clientHello{'extension_type_ec_point_formats'}   = 0x000b; # Tbd: hier, oder zentrale Definition?!
-            $clientHello{'extension_ec_point_formats_len'}    = 0x0002; # Tbd: hier, oder zentrale Definition?!
-            $clientHello{'extension_ec_point_formats_list_ele'} = 0x01; # Tbd: hier, oder zentrale Definition?!
-            $clientHello{'extension_ec_point_formats_list'}   = "\x00"; # Tbd: hier, oder zentrale Definition?!
-
-            $clientHello_extensions .= pack ("n n C a[$clientHello{'extension_ec_point_formats_list_ele'}]",
-              $clientHello{'extension_type_ec_point_formats'},        #n    = 0x000b
-              $clientHello{'extension_ec_point_formats_len'},         #n    = 0x00xz
-              $clientHello{'extension_ec_point_formats_list_ele'},    #C    = 0xxy
-              $clientHello{'extension_ec_point_formats_list'},        #a[$clientHello{'extension_ec_point_formats_list_ele'}] = 0x00....
-            );
-            _trace2 ("compileClientHelloExtensions ($ssl): ec_point_formats Extension added\n");
-        }
-    #} #end send always ECC extensions
-
+    }
+    ##### End Test
     $clientHello{'extensions_total_len'} = length($clientHello_extensions);
 
-    if ($clientHello_extensions) { # not empty
+    if ($clientHello_extensions) {                                  # not empty
         $clientHello_extensions = pack ("n a*",
-            length($clientHello_extensions),            #n
-            $clientHello_extensions                     #a[length($clientHello_extensions)]
+            length($clientHello_extensions),                        #n
+            $clientHello_extensions                                 #a[length($clientHello_extensions)]
         );
         _trace4 (sprintf ("_compileClientHelloExtensions ($ssl) (extensions_total_len = %04X)\n          >", $clientHello{'extensions_total_len'}).hexCodedString ($clientHello_extensions ,"           ")."<\n");
     }
     return ($clientHello_extensions);
 } # _compileClientHelloExtensions
 
+
+#? sub subs that parse parts of records, e.g. bytes for extensions ###############################
+    #? sub __parse_bytes_* and _parseNextByte, _parseAllBytes
+    #? the following subs use the same set of variables:
+    #? $__pdu_name:        for tracing and warnings: name of the PDU that is parsed, eg. extension
+    #? $__format_ref:      reference to an array including the format of the PDU, %__parse_bytes_subs maps the format names to the sub functions
+    #? $__param_hash_ref:  reference to an hash that stores the parsed values
+    #? $__format_pos_ref:  reference to the position in the array $__format_ref->[pos]
+    #? $__buffer_ref:      reference to the buffer that is going to be parsed
+    #? $__buffer_size:     size of the buffer
+    #? optional:
+    #? $__format_text_ref: reference to an array describing the semantic of the parts of the PDU
+    #? $__indent:          indent for tracing
+    #? use this subs via '%__parse_bytes_subs' a self defined general description for the structure of for PDUs, e.g. tls extensions
+
+sub __parse_bytes_len1 ($$$$$$;$$) {
+    #? parses a len1 bytes field
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $__next_data = "";
+    my $__len;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_len1 for '$__pdu_name'      ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 1);
+    ($__len,                                                        #C
+     $$__buffer_ref) = unpack("C a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%02X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    $$__format_pos_ref++;                                           # Next format element
+    ($__next_data,                                                  #a[$len]
+     $$__buffer_ref) = unpack("a[$__len] a*", $$__buffer_ref);
+    _parseAllBytes ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, \$__next_data, $__len, $__format_text_ref, $__indent + 3) if ($__len > 0);
+    $__buffer_size -= (1 + $__len);
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_len2 ($$$$$$;$$) {
+    #? parses a len2 bytes field
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $__next_data = "";
+    my $__len;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_len2 for '$__pdu_name'      ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 2);
+    ($__len,                                                        #n
+     $$__buffer_ref) = unpack("n a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%04X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    $$__format_pos_ref++;                                           # Next format element
+    ($__next_data,                                                  #a[$len]
+     $$__buffer_ref) = unpack("a[$__len] a*", $$__buffer_ref);
+    _parseAllBytes ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, \$__next_data, $__len, $__format_text_ref, $__indent + 3) if ($__len > 0);
+    $__buffer_size -= (2 + $__len);
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_len3 ($$$$$$;$$) {
+    #? parses a len3 bytes field
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $__next_data = "";
+    my $__len;
+    my $__len1;
+    my $__len2;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_len3 for '$__pdu_name'      ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 3);
+    ($__len1,                                                       #C
+     $__len2,                                                       #n
+     $$__buffer_ref) = unpack("C n a*", $$__buffer_ref);
+    $__len  = $__len1 << 16;
+    $__len += $__len2;
+    _trace2_ (_decode_val ("%06X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    $$__format_pos_ref++;                                           # Next format element
+    ($__next_data,                                                  #a[$len]
+     $$__buffer_ref) = unpack("a[$__len] a*", $$__buffer_ref);
+    _parseAllBytes ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, \$__next_data, $__len, $__format_text_ref, $__indent + 3) if ($__len >0);
+    $__buffer_size -= (3 + $__len);
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_raw ($$$$$$;$$) {
+    #? parses a raw bytes field
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_hex_str = "";
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_raw for '$__pdu_name'       ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 1);                             # nothing to parse
+    return (0) if ($__buffer_size > length ($$__buffer_ref));       #TBD: Warn
+    (my $__val,                                                     #n
+     $$__buffer_ref) = unpack("a[$__buffer_size] a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+        push @{$__param_hash_ref->{values}}, $__val;                        # array of values
+        push @{$__param_hash_ref->{format_positions}}, $$__format_pos_ref;  # array of format positions
+    }
+    # $__buffer_size = length ($$__buffer_ref);
+    return (0);
+}
+
+sub __parse_bytes_sequence ($$$$$$;$$) {
+    #? parses a sequence of bytes fields
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $__sequence_pos = 0;
+    my %__sequence_param_hash;
+    my $__sequence_param_hash_ref = (defined ($__param_hash_ref))? \%__sequence_param_hash : undef;   # (condition)? <value if true> : <value if false>
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_sequence for '$__pdu_name'  ($$__format_pos_ref, $__buffer_size):\n");
+    _trace4_ (_decode_val (undef, undef, $__format_text_ref->[$$__format_pos_ref], ($__indent + 3), ($__indent + 3), ":\n" . " " x ($__indent + 3), ",\n" . " " x ($__indent + 3), " | ", " / ") . "\n");
+    $$__format_pos_ref++;                                           # Next format element
+    $__sequence_pos = $$__format_pos_ref;                           # store start position of sequence
+    my $_counter = 0;
+    while (defined ($$__buffer_ref) && ($__buffer_size > 0)) {      # still data
+        $$__format_pos_ref = $__sequence_pos;                       # reset format_pos to first element of sequence format
+        _trace4_ (" " x $__indent);
+        _trace4  ("__parse_bytes_sequence: (next) sequence elements for '$__pdu_name' ($$__format_pos_ref, $__buffer_size)\n");
+        $__buffer_size = _parseAllBytes ($__pdu_name, $__format_ref, $__sequence_param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size, $__format_text_ref, $__indent);
+        if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+            push @{$__param_hash_ref->{values}},           [$__sequence_param_hash_ref->{values}];    # array of array of values
+            push @{$__param_hash_ref->{format_positions}},  $__sequence_param_hash_ref->{format_positions} if ($_counter++ == 0);   # store format positions ony once
+        }
+    }
+    _trace4_ (" " x $__indent);
+    _trace4_ ("__parse_bytes_sequence for '$__pdu_name': ------ End of sequence ------\n");
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_size1 ($$$$$$;$$) {
+    #? parses a size1 bytes field and the next value(s)
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $__next_data = "";
+    my $__len = 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_size1 for '$__pdu_name'     ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 1);
+    ($__len,                                                        #C
+     $$__buffer_ref) = unpack("C a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%02X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    $$__format_pos_ref++;                                           # Next format element
+    ($__next_data,                                                  #a[$len]
+     $$__buffer_ref) = unpack("a[$__len] a*", $$__buffer_ref);
+    _parseNextByte ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, \$__next_data, $__len, $__format_text_ref, $__indent + 3) if ($__len >0);
+    $__buffer_size -= (1 + $__len);
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_size2 ($$$$$$;$$) {
+    #? parses a size2 bytes field and the next value(s)
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $__next_data = "";
+    my $__len = 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_size2 for '$__pdu_name'     ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 2);
+    ($__len,                                                        #n
+     $$__buffer_ref) = unpack("n a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%04X", \$__len, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    $$__format_pos_ref++;                                           # Next format element
+    ($__next_data,                                                  #a[$len]
+     $$__buffer_ref) = unpack("a[$__len] a*", $$__buffer_ref);
+    _parseNextByte ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, \$__next_data, $__len, $__format_text_ref, $__indent + 3) if ($__len >0);
+    $__buffer_size -= (2 + $__len);
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_val1 ($$$$$$;$$) {
+    #? parses a val1 bytes value
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_val1 for '$__pdu_name':     ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 1);
+    (my $__val,                                                     #C
+     $$__buffer_ref) = unpack("C a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%02X", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+        push @{$__param_hash_ref->{values}}, $__val;                        # array of values
+        push @{$__param_hash_ref->{format_positions}}, $$__format_pos_ref;  # array of format positions
+    }
+    $__buffer_size -= 1;
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_val2 ($$$$$$;$$) {
+    #? parses a val2 bytes value
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_val2 for '$__pdu_name':     ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 2);
+    (my $__val,                                                     #n
+     $$__buffer_ref) = unpack("n a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%04X", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+        push @{$__param_hash_ref->{values}}, $__val;                        # array of values
+        push @{$__param_hash_ref->{format_positions}}, $$__format_pos_ref;  # array of format positions
+    }
+    $__buffer_size -= 2;
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_val4 ($$$$$$;$$) {
+    #? parses a val4 bytes value
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_val4 for '$__pdu_name':     ($$__format_pos_ref, $__buffer_size)\n");
+    return (0) if ($__buffer_size < 4);
+    (my $__val,                                                     #N
+     $$__buffer_ref) = unpack("N a*", $$__buffer_ref);
+    _trace2_ (_decode_val ("%08X", \$__val, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x $__indent, " | ", " / ") . "\n");
+    if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+        push @{$__param_hash_ref->{values}}, $__val;                        # array of values
+        push @{$__param_hash_ref->{format_positions}}, $$__format_pos_ref;  # array of format positions
+    }
+    $__buffer_size -= 4;
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_val1List ($$$$$$;$$) {
+    #? parses a list of val1 byte values
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_val1List for '$__pdu_name': ($$__format_pos_ref, $__buffer_size):\n");
+    return (0) if ($__buffer_size < 1);
+    (my $__data,                                                    #(a)
+     $$__buffer_ref) = unpack("a[$__buffer_size] a*", $$__buffer_ref);
+    (my @__list)     = unpack("C*", $__data);                       #C
+    _trace2_ (_decode_val ("%02X", \@__list, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x ($__indent + 2), " | ", " / ") . "\n");
+    if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+        push @{$__param_hash_ref->{values}}, [@__list];                     # array of array of values
+        push @{$__param_hash_ref->{format_positions}}, $$__format_pos_ref;  # array of format positions
+    }
+    $__buffer_size -= (@__list);                                    # 0
+    return ($__buffer_size);
+}
+
+sub __parse_bytes_val2List ($$$$$$;$$) {
+    #? parses a list of val2 bytes values
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    _trace4_ (" " x $__indent);
+    _trace4  ("__parse_bytes_val2List for '$__pdu_name': ($$__format_pos_ref, $__buffer_size):\n");
+    return (0) if ($__buffer_size < 2);
+    (my $__data,                                                    #(a)
+     $$__buffer_ref) = unpack("a[$__buffer_size] a*", $$__buffer_ref);
+    (my @__list)     = unpack("n*", $__data);                       #n
+    _trace2_ (_decode_val ("%04X", \@__list, $__format_text_ref->[$$__format_pos_ref], $__indent, $__indent, ":\n" . " " x $__indent, ",\n" . " " x ($__indent + 2), " | ", " / ") . "\n");
+    if ( (defined ($__param_hash_ref)) && (ref($__param_hash_ref) eq "HASH") ) {
+        push @{$__param_hash_ref->{values}}, [@__list];                     # array of array of values
+        push @{$__param_hash_ref->{format_positions}}, $$__format_pos_ref;  # array of format positions
+    }
+    $__buffer_size -= 2 * (@__list);                                # 0
+    return ($__buffer_size);
+}
+
+# Hash with all subs __parse_bytes_*_
+#? A self defined general description for the structure of for PDUs, e.g. tls extensions:
+#? len1:     Len of the next bytes, coded in 1 byte      (-> max 0xFF)
+#? len2:     Len of the next bytes, coded in 2 bytes     (-> max 0xFFFF)
+#? len3:     Len of the next bytes, coded in 3 bytes     (-> max 0xFFFFFF)
+#? size1:    Size of the next value, coded in 1 byte     (-> max 0xFF)
+#? size2:    Size of the next value, coded in 2 bytes    (-> max 0xFFFF)
+#? val1:     value, coded in 1 byte                      (-> max 0xFF)
+#? val2:     value, coded in 2 bytes                     (-> max 0xFFFF)
+#? val4:     value, coded in 4 byters                    (-> max 0xFFFFFFFF)
+#? val1List: List of value, coded in 1 byte              (-> max 0xFF, 0xFF, ...)
+#? val2List: List of value, coded in 2 bytes             (-> max 0xFFFF, 0xFFFF, ...)
+#? raw:      Raw bytes (number needs to be previously defined by a len or size element)
+#? sequence: Sequence of structured elements that form lists of compound values
+
+my %__parse_bytes_subs = (
+    len1        => \&__parse_bytes_len1,
+    len2        => \&__parse_bytes_len2,
+    len3        => \&__parse_bytes_len3,
+    raw         => \&__parse_bytes_raw,
+    sequence    => \&__parse_bytes_sequence,
+    size1       => \&__parse_bytes_size1,
+    size2       => \&__parse_bytes_size2,
+    val1        => \&__parse_bytes_val1,
+    val2        => \&__parse_bytes_val2,
+    val4        => \&__parse_bytes_val4,
+    val1List    => \&__parse_bytes_val1List,
+    val2List    => \&__parse_bytes_val2List,
+);
+
+sub _parseNextByte ($$$$$$;$$) {
+    #? parse the next byte(s)
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+    my $_hex_str = "";
+
+    _trace5_ (" " x ($__indent). "_parseNextByte for '$__pdu_name' ($$__format_pos_ref, $__buffer_size)\n" );
+    return ($__buffer_size) if ($$__format_pos_ref >= (@$__format_ref));
+    return (0) if (! defined ($__format_ref->[$$__format_pos_ref]) );
+    return (0) if ($__buffer_size < 1);
+    if ($__parse_bytes_subs{$__format_ref->[$$__format_pos_ref]}) {
+        $__buffer_size = $__parse_bytes_subs{$__format_ref->[$$__format_pos_ref]}->($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size, $__format_text_ref, $__indent);
+    } else {
+        carp ("**WARNING: Net::SSLhello::_parseNextByte ($__pdu_name): \'No such format sub: $__format_ref->[$$__format_pos_ref]\', => Please verify hash format definition in osaft.pm e.g. in \%TLS_EXTENSIONS");
+    }
+    $$__format_pos_ref++;                                           # Next format element
+    return ($__buffer_size);
+}
+
+sub _parseAllBytes ($$$$$$;$$) {
+    #? parse all byte(s) according the $__buffer_size
+    my ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_), shift(@_), shift(@_));
+    my $__format_text_ref   = shift(@_);
+    my $__indent            = shift(@_) || 0;
+
+    _trace5_ (" " x ($__indent). "_parseAllBytes for '$__pdu_name' ($$__format_pos_ref, $__buffer_size)\n");
+    while ( ($$__format_pos_ref < (@$__format_ref)) && (defined ($__format_ref->[$$__format_pos_ref])) && ($__buffer_size > 0) ) {
+        $__buffer_size = _parseNextByte ($__pdu_name, $__format_ref, $__param_hash_ref, $__format_pos_ref, $__buffer_ref, $__buffer_size, $__format_text_ref, $__indent);
+    }
+    return ($__buffer_size);
+}
+
+#? END of: sub subs that parse parts of records, e.g. bytes for extensions ####################
+
+sub _parseExtensions ($$$$;$$) {
+    #? Parse one or more TLS extensions according %osaft::TLS_EXTENSIONS and its reverse hash %osaft::TLS_ID_TO_EXTENSIONS
+    #? and store the values in the hash $_param_hash_ref->{$_extension}{$_ext_ch_rx} if defined
+    #? redundant values and value arrays are skipped
+    #? $_ext_ch_rx:       Clienthello 'CH' or received record 'RX'
+    #? $_param_hash_ref:  Reference to a hash where store the parsed results or undef if not needed
+    #? $_buffer_ref:      Reference to the data buffer that will be parsed
+    #? $_buffer_size:     size of the buffer:
+    #?                    >=0: The extension data starts with the first extension or is empty
+    #?                    < 0: The extension data starts with the length field for all extensions
+    #? optional:
+    #? $protocolCipher:   internal Hex value of the cipher, for tracing
+    #? $_indent:          indent for tracing, default = 12
+    #? ---------------------------------------------------------------------------
+    my ($_ext_ch_rx, $_param_hash_ref, $_buffer_ref, $_buffer_size) = (shift(@_), shift(@_), shift(@_), shift(@_));
+    my $protocolCipher      = shift(@_) || "";
+    my $_indent             = shift(@_) || 12;
+    my $_format_pos         = 0;
+    my $_name               = "_parseExtensions: ";
+    my $_extensions_data    = $$_buffer_ref;                        # do not chance referenced data
+    my @__local_format_text = ( \%osaft::TLS_ID_TO_EXTENSIONS );    # array with a reference to the reverse TLS_EXTENSIONS hash
+    my $__local_format_pos  = 0;                                    # use first element to decode extension type
+
+    _trace4_ (" " x $_indent . "# SSLhello::_parseExtensions ():\n");
+    if (($_buffer_size < 0) && (length ($_extensions_data) > 2)) {  # get the 2 bytes len from $_extension_data
+        ($_buffer_size,                                             #n
+         $_extensions_data) = unpack("n a*", $_extensions_data);
+        _trace2_ (_decode_val ("%04X", \$_buffer_size, "length of extensions", $_indent, $_indent, ":\n" . " " x $_indent, ",\n" . " " x $_indent, " | ", " / ") . "\n");
+        $_indent += 3;
+    }
+    PARSE_EXTENSION: while ($_buffer_size > 2) {
+        $__local_format_pos = 0;                                    # no extension type selected, yet
+        $_format_pos        = 0;                                    # reset to first format element of an extension type
+        my %_extension_type_hash;
+        $_extension_type_hash{values}            = ();              # reset array to store values
+        $_extension_type_hash{format_positions}  = ();              # reset array to store format positions
+        $_buffer_size       = __parse_bytes_val2 ($_name, undef, \%_extension_type_hash, \$__local_format_pos, \$_extensions_data, $_buffer_size, \@__local_format_text, $_indent);  # get extensions type
+        if (!defined ($_extension_type_hash{values}[0])) {          # found no extension
+            carp ("**WARNING: Net::sslHello::_parseExtensions: warn: no (more) defined extensionus found parsing the record\n");
+            next PARSE_EXTENSION;
+        }
+        my $_extension      = $osaft::TLS_ID_TO_EXTENSIONS{$_extension_type_hash{values}[0]}[0]; # get Extension type from $extension{description}[0]
+        $_extension         = "-- unknown (" . $_extension_type_hash{values}[0] . ") --" if (!defined ($_extension));
+        _trace5_ (" " x ($_indent + 4) . "== Extension '$_extension' ($_extension_type_hash{values}[0]):\n");
+
+        my %_param_hash;
+        $_param_hash{values}            = ();                       # initialize array to store values
+        $_param_hash{format_positions}  = ();                       # initialize array to store format positions
+        $_buffer_size       = _parseAllBytes ($_extension, \@{$osaft::TLS_EXTENSIONS{$_extension}{$_ext_ch_rx}}, \%_param_hash, \$_format_pos, \$_extensions_data, $_buffer_size, \@{$osaft::TLS_EXTENSIONS{$_extension}{"$_ext_ch_rx"."_TEXT"}}, $_indent + 3);
+        next PARSE_EXTENSION if (!defined ($_param_hash_ref));# do not store the results
+        _trace5_ (" " x ($_indent + 4) . "#      ---> _parseExtensions: ref (\$_param_hash_ref) = " . ref ($_param_hash_ref) ."\n" );#
+        next PARSE_EXTENSION if (ref ($_param_hash_ref) ne "HASH");                 # reference is no hash
+        _trace5_ (" " x ($_indent + 4) . "#      ---> format:           \@{\$_param_hash{format_positions}} = "
+                  . _decode_val (undef, \@{$_param_hash{format_positions}}, undef, 0, $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n");
+        _trace5_ (" " x ($_indent + 4) . "#      ---> raw value:        \@{\$_param_hash{values}}           = "
+                  . _decode_val (undef, \@{$_param_hash{values}},           undef, 0, $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n");
+        _trace5_ (" " x ($_indent + 4) . "#      ---> Complex format: (\@{\$_param_hash{format_positions}}) = " . (@{$_param_hash{format_positions}}) . " > 1?\n");
+        if ( (@{$_param_hash{format_positions}}) > 1) {             # complex format => array of arrays
+            @{$_param_hash{values}} = [@{$_param_hash{values}}];    # store values of complex parameter formats as array of arrays
+        } elsif (ref ($_param_hash{values}[0]) eq 'ARRAY') {        # simple format for 1 format results
+            @{$_param_hash{values}} = $_param_hash{values}[0];      # so one answer with val1/2List = multible anwers with val1 or val2
+        }
+        _trace5_ (" " x ($_indent + 4) . "#      ---> standardized value(s): \@{\$_param_hash{values}}      = "
+                  . _decode_val (undef, \@{$_param_hash{values}},           undef, 0, $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n"); # ready to store value
+
+        if (! exists($_param_hash_ref->{$_extension}{$_ext_ch_rx}) ) { # first %_param_hash
+            _trace4_ (" " x ($_indent + 4) . "#      ===> store first results in \%{\$_param_hash_ref->{$_extension}{$_ext_ch_rx}}\n");
+            $_param_hash_ref->{$_extension}{$_ext_ch_rx} = \%_param_hash; # add sub hash to $_param_hash_ref->{$_extension}{$_ext_ch_rx}
+            _trace4_ (" " x ($_indent + 4) . "#      ===> value(s):     \@{\$_param_hash{values}}           = "
+                  . _decode_val (undef, \@{$_param_hash{values}},           undef, 0, $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n");
+            _trace4_ (" " x ($_indent + 4) . "#      ===> format(s):    \@{\$_param_hash{format_positions}} = "
+                  . _decode_val (undef, \@{$_param_hash{format_positions}}, undef, 0, $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n");
+        } else { # check if formats are identical and if values have not been stored before
+            _trace5_ (" " x ($_indent + 4) . "#      ---> Check if format is a SCALAR:       ref (\\\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[0]) = '" . ref (\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[0]) . "'\n");
+            _trace5_ (" " x ($_indent + 4) . "#      ---> Check if format is a nested array: ref (\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[0]) =  '" . ref ($_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[0]) . "'\n");
+            if (ref (\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[0]) eq 'SCALAR') {    # format is no nested array
+                _trace5_ (" " x ($_indent + 4) . "#      ---> merge new results and format_positions with hash '\$_param_hash_ref->{$_extension}{$_ext_ch_rx}}'\n");
+                my $found = 1;                                  # 1: true
+                _trace5_ (" " x ($_indent + 4) . "#      ---> (\@{\$_param_hash{format_positions}}) (" . (@{$_param_hash{format_positions}})
+                          . ") == (\@{\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}) ) (" . (@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}) . ")?\n");
+                next PARSE_EXTENSION if ( (@{$_param_hash{format_positions}}) == 0); # format is empty = nothing to add => parse next extension
+                if ( (@{$_param_hash{format_positions}}) == (@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}) ) { # the number of format_positions is identical: necessary condition
+                    CHECK_FORMAT: for (my $__pos = 0; $__pos < (@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}); $__pos++) {   # check if all format positions are identical
+                       _trace5_ (" " x ($_indent + 4) . "#      ---> \$_param_hash{format_positions}[$__pos] (" . $_param_hash{format_positions}[$__pos]
+                                 . ") == \$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[$__pos] (" . $_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[$__pos] . ")?\n");
+                       if ($_param_hash{format_positions}[$__pos] ne $_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}[$__pos]) { # format is not equal
+                            # TBD: different format: move stored format to 1st emement of a nested array, add new sequence of new formats to 2nd element; Do the same with the values
+                            _trace4_ (" " x ($_indent + 4) . "#      ---> merging values and format_positions to the result hash with different format sequences is not yet implemented! New values are lost: "
+                                      . _decode_val (undef, \@{$_param_hash{values}}, $osaft::TLS_EXTENSIONS{$_extension}{"$_ext_ch_rx"."_TEXT"}[$_format_pos], 0, $_indent + 17, ", ", " | ", " / ") . "\n");
+                            carp ("**WARNING: SSLhello::_parseExtensions: merging values and format_positions to the result hash with different format sequences is not yet implemented! New values are lost: "
+                                      . _decode_val (undef, \@{$_param_hash{values}}, $osaft::TLS_EXTENSIONS{$_extension}{"$_ext_ch_rx"."_TEXT"}[$_format_pos], 0, $_indent + 17, ", ", " | ", " / ") ."\n");
+                            $found = 0; # false
+                            last CHECK_FORMAT; # exit the loop
+                       }
+                    } # CHECK_FORMAT: for ...
+                    if ($found > 0) {                               # format is identical
+                        _trace5_ (" " x ($_indent + 4) . "#      ---> check for new results to be stored in '\$_param_hash_ref->{$_extension}{$_ext_ch_rx}}'\n");
+                        _trace5_ (" " x ($_indent + 4) . "#      ---> number of values to check: (\@{\$_param_hash{values}}) (" . (@{$_param_hash{values}})
+                                . ") <=> (\@{\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}}) ) (" . (@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}}) . ")?\n");
+                        next PARSE_EXTENSION if ( (@{$_param_hash{values}}) == 0); # values are empty = nothing to add => parse next extension
+                        FOREACH_NEW_VALUE: foreach my $_new_ele (@{$_param_hash{values}}) { # all new values or arrys of values
+                            _trace5_ (" " x ($_indent + 4)."#        ---|> new values-ref-type (\\\$new_ele):       >".ref(\$_new_ele)."<|\n");
+                            _trace5_ (" " x ($_indent + 4)."#        --||> new values-ref-type (\$new_ele):        >".ref($_new_ele)."<||\n");
+                            FOREACH_STORED_VALUE: foreach my $_stored_ele (@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}}) { # all stored values or arrys of values
+                                _trace5_ (" " x ($_indent + 4)."#        ---|> stored values-ref-type (\\\$stored_ele): >".ref(\$_stored_ele)."<|\n");
+                                _trace5_ (" " x ($_indent + 4)."#        --||> stored values-ref-type (\$stored_ele):   >".ref($_stored_ele) ."<||\n");
+                                if ( (ref (\$_new_ele) eq "SCALAR") && (ref (\$_stored_ele) eq "SCALAR") ) {        # both arrays are an simple array
+                                    _trace5_ (" " x ($_indent + 4)."#        ---> check if value is new (\$new_ele): '" . _decode_val (undef, \$_new_ele, undef, 0, $_indent + 4, ", ", " | ", " / ")
+                                              . "' == (\$_stored_ele): '" . _decode_val (undef, \$_new_ele, undef, 0, $_indent + 4, ", ", " | ", " / ") . "'?\n");
+                                    next FOREACH_STORED_VALUE if ($_new_ele ne $_stored_ele);
+                                    # value is identical
+                                    _trace5_ (" " x ($_indent + 4) . "#        ---> \$_new_ele (" . _decode_val (undef, \$_new_ele, undef, 0, $_indent + 4, ", ", " | ", " / ") . ") has been alteady stored. Try next ele.\n");
+                                    next FOREACH_NEW_VALUE;
+                                } elsif ( (ref ($_new_ele) eq "ARRAY") && (ref ($_stored_ele) eq "ARRAY") ) {       # both arrays are nested arrays (arrays of arrays)
+                                    FOREACH_POSITION: foreach my $__pos (0..$#{$_param_hash{format_positions}}) {   # all values = all format positions
+                                        _trace5_ (" " x ($_indent + 4) . "#        ---> \$_new_ele[$__pos] (" . _decode_val (undef, \@{$_new_ele}[$__pos], undef, 0, $_indent + 4, ", ", " | ", " / ") . ") == \$_stored_ele[$__pos] (" . _decode_val (undef, \@{$_stored_ele}[$__pos], undef, 0, $_indent + 4, ", ", " | ", " / ") . ")?\n");
+                                        next FOREACH_STORED_VALUE if (@{$_new_ele}[$__pos] ne @{$_stored_ele}[$__pos]);   # value is not equal
+                                    } # FOREACH_POSITION
+                                    # all positions are identical
+                                    next FOREACH_NEW_VALUE; # check next new value
+                                } else {
+                                    _trace (" " x ($_indent + 4)."**WARNING: Net::sslHello::_parseExtensions: internal error in result hash: new values-ref-type (\$_new_ele):       ".ref(\$_new_ele)."<| !=  (\$_stored_ele): ".ref(\$_stored_ele)."<| OR both neiter a SCALAR nor an ARRAY\n");
+                                    carp ("**WARNING: Net::sslHello::_parseExtensions: internal error in result hash: can't compare and store new values: "
+                                          . _decode_val (undef, \$_new_ele, undef, 0, $_indent + 4, ", ", " | ", " / ") . "\n");
+                                    next FOREACH_NEW_VALUE; # check next new value # TBD check if 'next' should change to 'last'?
+                                } # if ref \$new_ele ...
+                            } # FOREACH_STORED_VALUE
+                            # new_ele is new => store a new value array
+                            _trace4_ (" " x ($_indent + 4) . "#      ===> add new value (array) to the result hash: " . _decode_val (undef, \$_new_ele, undef, 0, $_indent + 4, ", ", " | ", " / ") . "\n");
+                            push @{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}}, $_new_ele; # store new value array to nested result array
+                        } # FOREACH_NEW_VALUE
+                    }
+                } # number of format positions is identical
+            } else { # nested format arrays => not used and not implemented, yet!
+                _trace4_ (" " x ($_indent + 4) . "#      ---> merging values and format_positions to the result hash with various formats is not yet implemented! New values are lost: "
+                          . _decode_val (undef, \@{$_param_hash{values}}, undef, 0, $_indent + 17, ", ", " | ", " / ") ."\n");
+                carp ("**WARNING: SSLhello::_parseExtensions: merging values and format_positions to the result hash with various formats is not yet implemented! New values are lost: "
+                          . _decode_val (undef, \@{$_param_hash{values}}, undef, 0, $_indent + 17, ", ", " | ", " / ") ."\n");
+            }
+        } # end of check if formats are identical and if values have not been stored before
+        _trace5_ (" " x ($_indent + 4) . "# -> values           = " . @{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}} . "\n");
+        _trace5_ (" " x ($_indent + 4) . "# -> format_positions = " . @{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}} . "\n");
+        _trace5_ (" " x ($_indent + 4) . "# ---> _parseExtensions: \@{\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}}          = "
+                  . _decode_val (undef, \@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}},           undef, 0 , $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n");
+        _trace5_ (" " x ($_indent + 4) . "# ---> _parseExtensions: \@{\$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions} = "
+                  . _decode_val (undef, \@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}, undef, 0 , $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n\n");
+
+        _trace2_ (" " x ($_indent + 4) . "# ===> Cipher '$protocolCipher', Extension '$_extension': accumulated $_ext_ch_rx values (" . @{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}}
+                  . "): " . _decode_val (undef, \@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{values}},           undef, 0 , $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n");
+        _trace2_ (" " x ($_indent + 4) . "# ===> Cipher '$protocolCipher', Extension '$_extension': $_ext_ch_rx format positions   (" . @{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}
+                  . "): " . _decode_val (undef, \@{$_param_hash_ref->{$_extension}{$_ext_ch_rx}{format_positions}}, undef, 0 , $_indent + 4, ":\n" . " " x ($_indent + 4), ", ", " | ", " / ") . "\n\n");
+    } # end of PARSE_EXTENSION
+} # _parseExtensions
+
+
+sub _doCheckAllExtensions ($$$$;$) {
+    #? simulate SSL handshake to check any extensions for a dedicated cipher
+    #? called by checkSSLciphers to check some extensions by the call
+    #
+    my $host            = shift || ""; # hostname
+    my $port            = shift || 443;
+    my $protocol        = shift || 0;  # 0x0002, 0x3000, 0x0301, 0x0302, 0x0303, etc
+    my $cipher          = shift || "";
+    my $dtls_epoch      = shift || 0;  # optional, used in DTLS only
+    my $parseAllRecords = 1;           # read, parse and analyse all received records (-> 1)
+    my $found_values    = 0;
+    my $acceptedCipher;
+    my $_last_extension = "";
+    my $protocolCipher  = '0x0300'.hexCodedCipher($cipher);
+
+    _trace4_ ("_doCheckAllExtensions {(Cipher: " . hexCodedCipher($cipher) . "):\n");
+    return if (!$cipher);
+    foreach my $_extension (@{$Net::SSLhello::check_extensions}) {
+        _trace4_ ("#  ---> _doCheckAllExtensions: extension '$_extension': ");
+        next if ( (! exists ($_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values})) || ((@{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}) < 1) );
+        $_last_extension = $_extension;
+        for (my $_i = 0; $_i < (@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}} ); $_i++) { # copy all values of 2 dim array
+            for (my $_j = 0; $_j < (@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}[$_i]} ); $_j++) {
+                $Net::SSLhello::extensions_params_hash{$_extension}[$_i][$_j] = $osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}[$_i][$_j]; # copy default value
+            }
+            _trace5_ (" (copied values         = [$_i][" . (@{$Net::SSLhello::extensions_params_hash{$_extension}[$_i]}) . "], ");
+        }
+        _trace5_ (" parameter arrays       = " . (@{$Net::SSLhello::extensions_params_hash{$_extension}}) . "/" . (@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}}) . ", ");
+        _trace5_ (" format_positions       = " . (@{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{format_positions}}) . ", ") if (exists ($_SSLhello{$protocolCipher}{param}{$_extension}{RX}{format_positions}) );
+        _trace5_ (" found values           = " . (@{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}) ) if (exists ($_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}) );
+        _trace5_ ("):\n");
+        if ((@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}}) == 1) {
+##        if ( ((@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}}) == 1)
+##          && (exists ($Net::SSLhello::{param}{$_extension}{RX}{format_positions}) )
+##          && ((@{$Net::SSLhello::{param}{$_extension}{RX}{format_positions}}) == 1)) { # only one parameter array ([0][x]) as default and only one dimensional result array ### }
+            _trace5_ ("#    ---> extension '$_extension':\n");
+            $found_values = 0;
+            while ( (exists ($_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values})) && ((@{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}) > $found_values) ) { # received a new value
+                _trace5_ ("#     ---> parameter arrays[0]    = " . (@{$Net::SSLhello::extensions_params_hash{$_extension}[0]}) . "/" . (@{$osaft::TLS_EXTENSIONS{$_extension}{DEFAULT}[0]}) . "\n");
+                _trace5_ ("#     ---> parameter values type  = " . (ref($_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values})) . "\n");
+                last if (!defined($_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}->[$#{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}]) ); # found value is not defined => Exit Loop
+                last if (!(grep { $_ eq $_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}->[$#{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}] } @{$Net::SSLhello::extensions_params_hash{$_extension}[0]})); # found value has NOT been in the offered list => Exit Loop
+                $found_values++;
+                _trace5_ ("#     ---> extension found $found_values value(s) " . _decode_val (undef, \@{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}, \%osaft::TLS_EXTENSIONS{$_extension}, 12, 12, ": ", ", ", " | ", " / ") . "\n");
+                @{$Net::SSLhello::extensions_params_hash{$_extension}[0]} = grep { $_ ne $_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}->[$#{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}] }
+                                                                                   @{$Net::SSLhello::extensions_params_hash{$_extension}[0]};  # delete accepted cipher from ToDo-Array '@cipherSpecArray'
+                _trace5_ ("#     ---> extensions_params_hash: " . _decode_val (undef, \@{$Net::SSLhello::extensions_params_hash{$_extension}[0]}, \%osaft::TLS_EXTENSIONS{$_extension}, 12, 12, ": ", ", ", " | ", " / ") . "\n");
+
+                last if ( (@{$Net::SSLhello::extensions_params_hash{$_extension}[0]}) < 1); # no more elements to check
+                if ($found_values > $Net::SSLhello::extensions_max_values) { ## protect ftom staying in an endless loop
+                    _trace2_ ("**WARNING: SSLhello::_doCheckAllExtension ($_extension): To much checks for this extension. Watchdog aborted checks after getting $found_values values.\n**Hint: Please verify the hash '%osaft::TLS_EXTENSIONS' and the variable '\$Net::SSLhello::check_extensions', or '\$Net::SSLhello::extensions_max_values' if necessary.\n");
+                    carp ("**WARNING: SSLhello::_doCheckAllExtension ($_extension): To much checks for this extension. Watchdog aborted checks after getting $found_values values.\n**Hint: Please verify the hash '%osaft::TLS_EXTENSIONS' and the variable '\$Net::SSLhello::check_extensions', or '\$Net::SSLhello::extensions_max_values' if necessary.\n");
+                    last; ## protect ftom staying in an endless loop
+                }
+                _trace5_ ("#     ---> check next extension '$_extension' parameter for cipher: " . hexCodedCipher($cipher) . ":\n");
+                $acceptedCipher = _doCheckSSLciphers($host, $port, $protocol, $cipher, $dtls_epoch, $parseAllRecords);
+                _trace5_ ("#     ---> received cipher: " . hexCodedCipher($acceptedCipher) . " == " . hexCodedCipher($cipher) . "?\n");
+                last if ($acceptedCipher ne $cipher);
+                _trace5_ ("#     ---> next while (" . (@{$_SSLhello{$protocolCipher}{param}{$_extension}{RX}{values}}) . " > $found_values)\n");
+            }
+            _trace1_ ("# _doCheckAllExtensions (Cipher: " . hexCodedCipher($cipher) . ") ==> extension '$_extension': found $found_values values.\n");
+        } else {
+            _trace_ ("SSLhello::_doCheckAllExtensions ($_extension): Detailled checks for extensions with multiple parameters are not supported, yet. Please check variable '\$Net::SSLhello::check_extensions').");
+            carp ("**WARNING: SSLhello::_doCheckAllExtensions ($_extension): Detailled checks for extensions with multiple parameters are not supported, yet. Please check variable '\$Net::SSLhello::check_extensions').");
+        }
+        delete ($Net::SSLhello::extensions_params_hash{$_extension}); # delete temporary hash
+    }
+    delete ($Net::SSLhello::extensions_params_hash{$_last_extension}) if (defined ($Net::SSLhello::extensions_params_hash{$_last_extension})); # delete temporary hash
+} # _doCheckAllExtensions
+
+
 =pod
 
 =head2 parseServerKeyExchange( )
 
-Manually parse a Server Kex Exchange Packet from
-- DHE handshake to detect the length of the DHparam (needed for openssl <= 1.0.1), e.g. dh, 2048 bits (dh in small letters to be different from openssl (large letters)
-- ECDHE handshake to check for the most priorized Curve
+Manually parse a Server Kex Exchange packet and detect KeyExchange length, according https://tools.ietf.org/html/rfc5246#section-7.4.3
+- DHE:   length of the DHparam (needed for openssl <= 1.0.1), e.g. dh, 2048 bits (dh in small letters to be different from openssl (large letters)
+- ECDHE: check for the most prioritized Curve (supported_group):
+~        RFC 8422: Elliptic Curve Cryptography (ECC) Cipher Suites for Transport Layer Security (TLS) Versions 1.2 and Earlier
+- RSA:   RFC 6101: The Secure Sockets Layer (SSL) Protocol Version 3.0, e.g. EXPORT ciphers
+- PSK:   Pre-Shared Keys can be used alone or in combination with all other 3 server key types:
+~        RFC 4279: Pre-Shared Key Ciphersuites for Transport Layer Security (TLS), 
+~        RFC 4785: Pre-Shared Key (PSK) Ciphersuites with NULL Encryption for Transport Layer Security (TLS),
+~        RFC 5487: Pre-Shared Key Cipher Suites for TLS with SHA-256/384 and AES Galois Counter Mode,
+~        RFC 5489: ECDHE_PSK Cipher Suites for Transport Layer Security (TLS)
+            
 =cut
 
 sub parseServerKeyExchange($$$) {
-    #? parse a ServerKeyExchange packet to detect length of DHparam
+    #? parse a ServerKeyExchange packet to detect length of DHparam, ECDHE 'supprted_group', RSA Key length, optional usage of PSK
+    #? Test PSK ciphers locally with: "openssl s_server -4 -psk 1a2b3c4d -psk_hint 01020304 -nocert -www -msg"
+    #? Verfied size of DHparam etc manually with "openssl s_client -showcerts -msg -psk 1a2b3c4d -tls1_2 -cipher 'DHE-PSK-AES128-CBC-SHA' -connect localhost:4433"
+    #? TBD: parsie independant from cipher name; could be needed for TLSv13
     my ($keyExchange, $len, $d) = @_;
     my ($_tmpLen, $_null, $_handshake_type, $_bits) = 0;
     my %_mySSLinfo;
+    my $psk = "";                                                   # set to postfix '_psk' if PSK is additionally used.
     _trace2("parseServerKeyExchange($keyExchange, $len, ...)\n");
     _trace4("parseServerKeyExchange(KeyExchange= $keyExchange, Len= $len, Data= ".unpack("H*",$d)."\n");
     $_tmpLen = length (unpack("H*",$d))/2;
     carp ("parseServerKeyExchange: Error in ServerKeyExchange Message: unexpected len ($_tmpLen) should be $len bytes") if ($len != $_tmpLen);
-    return if ($len != $_tmpLen);
+    return ("-- Error in ServerKeyExchange --", "", undef) if ($len != $_tmpLen);
+    if ($keyExchange =~ /PSK/) { # PSK-Cipher => 'Prefix': psk_identity_hint, rfc4279)
+        ($_mySSLinfo{'psk_identity_hint_len'},     # n
+         $d) = unpack("n a*", $d);
 
+        ($_mySSLinfo{'psk_identity_hint'},         # a[$_mySSLinfo{'psk_identity_hint_len'}]
+         $d) = unpack("a[$_mySSLinfo{'psk_identity_hint_len'}] a*", $d);
+         $_mySSLinfo{'psk_identity_hint'} = unpack ("H*", $_mySSLinfo{'psk_identity_hint'}); # Convert to a readable HEX-String
+        _trace2( sprintf (
+                " PSK Key Exchange (len=%d):\n".
+                "# -->     psk_identity_hint: (len=%4d) >%s<\n",
+                $len,
+                $_mySSLinfo{'psk_identity_hint_len'},
+                $_mySSLinfo{'psk_identity_hint'}
+        ));
+        if ($keyExchange =~ /^PSK/x) { #  nothing more to do
+            _trace4("parseServerKeyExchange: PSK_serverParam\n");
+            _trace2("parseServerKeyExchange() done.\n");
+            return ("psk", "" , undef);
+        }
+        $psk = "_psk";                                              # set '_psk' as postfix for the following ServerKeyExchanges
+        $len -= ($_mySSLinfo{'psk_identity_hint_len'}+2);
+        $keyExchange =~ s/^((?:EC)?DH)(?:_PSK)?.*/$1/x; # EDH_PSK -> DH, ADH_PSK -> DH, EECDH_PSK -> ECDH
+        _trace2_ (" --> KeyExchange (DH, ECDH) = $keyExchange\n"); # => ECDH or DH, or ECDH_PSK o DH_PSK
+    } # PSK
     if ($keyExchange eq "DH") {
 
         ($_mySSLinfo{'DH_ServerParams_p_len'},    # n
@@ -3898,34 +5304,36 @@ sub parseServerKeyExchange($$$) {
                 $_mySSLinfo{'DH_ServerParams_PubKey'}
         ));
         $_bits = $_mySSLinfo{'DH_ServerParams_p_len'} * 8;
-        $_mySSLinfo{'DH_serverParam'} = "dh, ". $_bits ." bits"; # manually generate the same message that is generated by openssl >= 1.0.2 but here with 'dh' in small letters
-        ###TEST TEST $_mySSLinfo{$keyExchange.'_serverParam'} = "dh, ". $_bits ." bits"; # manually generate the same message that is generated by openssl >= 1.     0.2 but here with 'dh' in small letters
+        $_mySSLinfo{'DH_serverParam'} = $_bits ." bits"; # manually generate the same message that is generated by openssl >= 1.0.2 but here with 'dh' in small letters
         _trace4("parseServerKeyExchange: DH_serverParam: ".$_mySSLinfo{'DH_serverParam'}."\n");
         _trace2("parseServerKeyExchange() done.\n");
-        return ($_mySSLinfo{'DH_serverParam'});
+        return ("dh" . $psk, $_mySSLinfo{'DH_serverParam'}, undef);
 
-    } elsif ($keyExchange eq "ECDH") { # check for the most priorized Curve; TBD: check for all supported Curves later (by sending more Client_hellos, like to check the ciphers); this should be managed by a superior routine
+    } elsif ($keyExchange eq "ECDH") { # check for the selected Curve (supported_group) # TBD verify if this is the default check for TLSv13?
         ($_mySSLinfo{'ECDH_eccurve_type'},    # C
          $d) = unpack("C a*", $d);
-
         if ($_mySSLinfo{'ECDH_eccurve_type'} == $ECCURVE_TYPE{'named_curve'}) {
             ($_mySSLinfo{'ECDH_namedCurve'},    # n
             $d) = unpack("n a*", $d);
-            $_mySSLinfo{'ECDH_serverParam'} = "(primary) named_curve: <<unknown: ".$_mySSLinfo{'ECDH_namedCurve'}.">>"; # set a default value
-            $_mySSLinfo{'ECDH_serverParam'} = "(primary) named_curve: ". $ECC_NAMED_CURVE {$_mySSLinfo{'ECDH_namedCurve'}}[0] .", ". $ECC_NAMED_CURVE {$_mySSLinfo{'ECDH_namedCurve'}}[1] . " bits" if ( defined ($ECC_NAMED_CURVE {$_mySSLinfo{'ECDH_namedCurve'}}[0]) );
+            $_mySSLinfo{'ECDH_serverParam'} = "<<unknown: ".$_mySSLinfo{'ECDH_namedCurve'}.">>"; # set a default value
+            $_mySSLinfo{'ECDH_serverParam'} = $osaft::TLS_SUPPORTED_GROUPS{$_mySSLinfo{'ECDH_namedCurve'}}[0] ." (". $osaft::TLS_SUPPORTED_GROUPS{$_mySSLinfo{'ECDH_namedCurve'}}[1] . " bits)" if ( defined ($osaft::TLS_SUPPORTED_GROUPS{$_mySSLinfo{'ECDH_namedCurve'}}[0]) );
+            _trace4("parseServerKeyExchange: ECDH_serverParam supported group: '" . $_mySSLinfo{'ECDH_serverParam'} . "'\n");
+            _trace2("parseServerKeyExchange() done.\n");
+            return ("ecdh"  . $psk . " supported_group(s)", $_mySSLinfo{'ECDH_serverParam'}, $_mySSLinfo{'ECDH_namedCurve'});
+            # $_mySSLinfo{'ECDH_namedCurve'} will be returned to be deleted from extensions list supported_groups
         } elsif ($_mySSLinfo{'ECDH_eccurve_type'} == $ECCURVE_TYPE{'explicit_prime'}) { # only basic parsing, no additional trace information about additional parameters, yet,
             ($_mySSLinfo{'ECDH_explicit_prime_p_len'},    # C
              $d) = unpack("C a*", $d);
             $_bits = $_mySSLinfo{'ECDH_explicit_prime_p_len'} * 8;
-            $_mySSLinfo{'ECDH_serverParam'} = "(primary) explicite_prime: ". $_bits ." bits"; # manually generate a message that could ressemble to openssl >= 1.0.2 but here with 'ecdh' in small letters (TBD: get an original Message from OpenSSL for this special type of Curves
+            $_mySSLinfo{'ECDH_serverParam'} = "explicite_prime: ". $_bits ." bits"; # manually generate a message that could ressemble to openssl >= 1.0.2 but here with 'ecdh' in small letters (TBD: get an original Message from OpenSSL for this special type of Curves
         } elsif ($_mySSLinfo{'ECDH_eccurve_type'} == $ECCURVE_TYPE{'explicit_char2'}) { # no parsing yet: #TBD: support this type later
-            $_mySSLinfo{'ECDH_serverParam'} = "(primary) explicite_char2: <<not parsed, yet>>";
+            $_mySSLinfo{'ECDH_serverParam'} = "explicite_char2: <<not parsed, yet>>";
         } else {
             $_mySSLinfo{'ECDH_serverParam'} = "<<unknown ECC Curve type: ".$_mySSLinfo{'ECDH_eccurve_type'}.">>";
         }
         _trace4("parseServerKeyExchange: ECDH_serverParam: '".$_mySSLinfo{'ECDH_serverParam'}."'\n");
         _trace2("parseServerKeyExchange() done.\n");
-        return ("ecdh, ".$_mySSLinfo{'ECDH_serverParam'});
+        return ("ecdh" . $psk, $_mySSLinfo{'ECDH_serverParam'}, undef);
     } elsif (($keyExchange =~ /^RSA/x) || ($keyExchange =~ /^EXP/x)) { # check for RSA
         ($_mySSLinfo{'RSA_ServerParams_modulus_len'},   # n
          $d) = unpack("n a*", $d);
@@ -3951,23 +5359,21 @@ sub parseServerKeyExchange($$$) {
                 $_mySSLinfo{'RSA_ServerParams_exponent'}
         ));
         $_bits = $_mySSLinfo{'RSA_ServerParams_modulus_len'} * 8;
-        $_mySSLinfo{'RSA_serverParam'} = "rsa, ". $_bits ." bits"; # manually generate the same message that is generated by openssl >= 1.0.2 but here with 'rsa' in small letters
-        ###TEST TEST $_mySSLinfo{$keyExchange.'_serverParam'} = "dh, ". $_bits ." bits"; # manually generate the same message that is generated by openssl >= 1.     0.2 but here with 'dh' in small letters
+        $_mySSLinfo{'RSA_serverParam'} = $_bits ." bits"; # manually generate the same message that is generated by openssl >= 1.0.2 but here with 'rsa' in small letters
         _trace4("parseServerKeyExchange: RSA_serverParam: ".$_mySSLinfo{'RSA_serverParam'}."\n");
         _trace2("parseServerKeyExchange() done.\n");
-        return ($_mySSLinfo{'RSA_serverParam'});
+        return ("rsa" . $psk, $_mySSLinfo{'RSA_serverParam'}, undef);
     } else { # nor DH neither ECDH
         _trace2("parseServerKeyExchange: The only supported KeyExchange types are DH, ECDH and RSA yet (not $keyExchange)\n");
         _trace2("parseServerKeyExchange() done.\n");
-        return ("");
+        return ("-- unsupported KeyExchange --" . $psk, "", undef);
     }
-
 } # parseServerKeyExchange
 
 
 sub parseHandshakeRecord ($$$$$$$;$) {
-    #? FIXME: <<description missing>> <<POD missing>>
-    # return (<cipher>, <cookie-len (DTLDS)>, <cookie (DTLS)>
+    #? <<description missing>> <<POD missing>> # FIXME:
+    # return (<nextData>, <cookie-len (DTLDS)>, <cookie (DTLS)>, <cipher>)
     my $host        = shift || ""; # for warn- and trace messages
     my $port        = shift || ""; # for warn- and trace messages
     my $recordType  = shift || 0;  # recordType
@@ -3977,6 +5383,7 @@ sub parseHandshakeRecord ($$$$$$$;$) {
     my $lastCipher  = shift || ""; # lastCipher
     my $client_protocol = shift || "";  # optional
 
+    my $buffer      = "";          # temporarily store data of next record if alredy available
     my $rest        = "";
     my $tmp_len     = 0;
     my $message     = "";
@@ -3986,15 +5393,18 @@ sub parseHandshakeRecord ($$$$$$$;$) {
     my $keyExchange = "";
     my $description = "";
     my $lastMsgType = $HANDSHAKE_TYPE {'<<undefined>>'}; #undefined
+    my $lastProtocolCipher = '0x0300'.hexCodedCipher($lastCipher);
 
     local $my_error = ""; # reset error message
 
     my $sni = "";
-    my %rhash = reverse %PROTOCOL_VERSION;
-    my $ssl_client = $rhash{$client_protocol};
+    my $client_ssl = $PROTOCOL_NAME_BY_HEX{$client_protocol};
+    if (! defined $client_ssl) {
+        $client_ssl = "--unknown protocol--";
+    }
 
     #reset error_handler and set basic information for this sub
-    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'parseHandshakeRecord', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'parseHandshakeRecord', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
 
     $Net::SSLhello::use_sni_name = 1 if ( ($Net::SSLhello::use_sni_name == 0) && ($Net::SSLhello::sni_name) && ($Net::SSLhello::sni_name ne "1") ); ###FIX: quickfix until migration of o-saft.pl is compleated (tbd)
     unless ($Net::SSLhello::use_sni_name) {
@@ -4030,7 +5440,7 @@ sub parseHandshakeRecord ($$$$$$$;$) {
             if ($serverHello{'msg_type'} == $SSL_MT_SERVER_HELLO) {
                 _trace4 ("    Handshake protocol: SSL2 Server Hello\n");
                 _trace4 ("        Message type: (Server Hello (2)\n");
-                return (parseSSL2_ServerHello ($host, $port, $message, $client_protocol), $lastMsgType, 0, ""); # cipher_spec-Liste
+                return ("",  $lastMsgType, 0, "", parseSSL2_ServerHello ($host, $port, $message, $client_protocol)); # cipher_spec-Liste
             } elsif ($serverHello{'msg_type'} == $SSL_MT_ERROR) { # simple error handling for ssl2
                 ($serverHello{'err_code'}        # n
                  ) = unpack("n", $message);
@@ -4039,14 +5449,16 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                 unless ($serverHello{'err_code'} == 0x0001) { # SSLV2_No_Cipher, TBD: this could be improved later (if needed)
                     carp ("**WARNING: parseHandshakeRecord: Server '$host:$port': received a SSLv2 error message: , code: >0x".hexCodedString ($serverHello{'err_code'})." -> answer ignored\n");
                 }
-                return ("", $lastMsgType, 0, "");
+                return ("", $lastMsgType, 0, "", "");
             } else { # if ($serverHello{'msg_type'} == 0 => unsupported protocol (?!)
                 $my_error= "    Unknown SSLv2 message type (Dez): ".$serverHello{'msg_type'}.", Msg: >".hexCodedString ($message)."< -> check for SSLv2 is aborted\n";
-                return ("",$lastMsgType, 0 , "");
+                return ("", $lastMsgType, 0 , "", "");
             }
         } else { # SSLv3, TLS or DTLS:a parse messages
             if ($recordType == $RECORD_TYPE {'handshake'}) {
-                $nextMessages = $recordData;
+               ($nextMessages,                                      #a[$recordLen}]
+                $buffer) = unpack("a[$recordLen] a*", $recordData);
+
                 while ($nextMessages ne "") { # read and parse all included messages and return the cipher at the end
                     if (($recordVersion & 0xFF00) == $PROTOCOL_VERSION{'SSLv3'}) { #SSL3 , TLS1.
                         ($serverHello{'msg_type'},          # C
@@ -4102,7 +5514,8 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                             $my_error= "$host:$port: sorry, fragmented DTLS packets are not yet supported -> Retry";   ####TBD TBD TBD ###
                             _trace2 ("parseHandshakeRecord: $my_error\n");
                             carp ("parseHandshakeRecord: $my_error");
-                            return ("", $lastMsgType, 0, "");
+                            # return ($nextMessages, $lastMsgType, 0, "", ""); # maybe later, if fragmented dtls messages will be isupported
+                            return ("", $lastMsgType, 0, "", "");
                         }
                         $serverHello{'fragment_len'} |= $serverHello{'fragment_len_3rd_byte'} <<16 if ($serverHello{'fragment_len_3rd_byte'} > 0);
                         _trace ("parseHandshakeRecord: >>>WARNING: $host:$port: Received a huge fragment with $serverHello{'fragment_len'} bytes\n") if ($serverHello{'fragment_len_3rd_byte'} > 0);
@@ -4115,7 +5528,7 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                         # test huge messages using '10000-sans.badssl.com' (https)
                         _trace2_ ("parseHandshakeRecord: Server '$host:$port': Received a huge message with $serverHello{'msg_len'} bytes\n") if ($serverHello{'msg_len_3rd_byte'} > 0);
                         _trace2_ ("parseHandshakeRecord: fragmented message with $serverHello{'msg_len'} bytes length -> get next record\n");
-                        return ($nextMessages, $HANDSHAKE_TYPE {'<<fragmented_message>>'}, $serverHello{'cookie_length'}, $serverHello{'cookie'});
+                        return ($nextMessages.$buffer, $HANDSHAKE_TYPE {'<<fragmented_message>>'}, $serverHello{'cookie_length'}, $serverHello{'cookie'}, "");
                     }
 
                     _trace ("parseHandshakeRecord: >>> WARNING: Server '$host:$port': Received a huge message with $serverHello{'msg_len'} bytes\n") if ($serverHello{'msg_len_3rd_byte'} > 0);
@@ -4135,8 +5548,9 @@ sub parseHandshakeRecord ($$$$$$$;$) {
 
                         $cipher =  parseTLS_ServerHello ($host, $port, $message, $serverHello{'msg_len'},$client_protocol);
                         $lastCipher = $cipher; # to link further Information to this cipher
-#                       return (parseTLS_ServerHello ($host, $port, $message, $serverHello{'msg_len'},$client_protocol),$lastMsgType, 0,""); # moved bebind the 'while-loop'
-                        _trace2_ ("# ==>       found cipher:      >0x0300".hexCodedCipher($cipher)."<\n");
+                        $lastProtocolCipher = '0x0300'.hexCodedCipher($lastCipher);
+#                       return ("", $lastMsgType, 0,"", parseTLS_ServerHello ($host, $port, $message, $serverHello{'msg_len'},$client_protocol) ); # moved bebind the 'while-loop'
+                        _trace2_ ("# ==>       found cipher:      >$lastProtocolCipher<\n");
                     } elsif ($serverHello{'msg_type'} == $HANDSHAKE_TYPE {'hello_verify_request'}) { # DTLS only: get the Cookie to resend the request
                         if (length($message) >= 3) {
                             ($serverHello{'version'},              # n
@@ -4164,43 +5578,60 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                                 $my_error = "Server '$host:$port': DTLS-HelloVerifyRequest: 'cookie_length' ($serverHello{'cookie_length'}) out of Range <0..32)";
                                 carp ("parseHandshakeRecord: $my_error");
                             }
-                            return ("", $lastMsgType, $serverHello{'cookie_length'}, $serverHello{'cookie'});
+                            return ($rest.$buffer, $lastMsgType, $serverHello{'cookie_length'}, $serverHello{'cookie'},""); # TBD: check if .$buffer is really needed
                         }
                     } elsif ($serverHello{'msg_type'} == $HANDSHAKE_TYPE {'server_key_exchange'}) { ##### Server Key Exchange: to check DHE und ECDHE parameters
                         _trace2 ("parseHandshakeRecord: Cipher: ".hexCodedCipher ($lastCipher)."\n");
-                        $keyExchange = $cipherHexHash {'0x0300'.hexCodedCipher($lastCipher)}[0];
+                        $keyExchange = $cipherHexHash {$lastProtocolCipher}[0];
                         if (defined ($keyExchange)) { # found a cipher
-                            _trace2_ (" --> Cipher(1): $keyExchange\n");
-                            $keyExchange =~ s/((?:EC)?DHE?)_anon.*/A$1/x;   # DHE_anon -> EDH, ECDHE_anon -> AECDH, DHE_anon -> ADHE
-                            _trace4_ (" --> Cipher(2): $keyExchange\n");
-                            $keyExchange =~ s/((?:EC)?DH)E.*/E$1/x;         # DHE -> EDH, ECDHE -> EECDH
-                            _trace4_ (" --> Cipher(3): $keyExchange\n");
-                            $keyExchange =~ s/^(?:EXP[_-])?(?:E|A|EA)((?:EC)?DH).*/$1/x; # EDH -> DH, ADH -> DH, EECDH -> ECDH
-                            _trace2_ (" --> KeyExchange (DH or ECDH) = $keyExchange\n"); # => ECDH or DH
+                            _trace5_ (" --> Cipher(1): $keyExchange\n");
+                            $keyExchange =~ s/((?:EC)?DHE?)_anon((_PSK)?).*/A$1$2/x;   # DHE_anon -> EDH, ECDHE_anon -> AECDH, DHE_anon -> ADHE
+                            _trace5_ (" --> Cipher(2): $keyExchange\n");
+                            $keyExchange =~ s/((?:EC)?DH)E((_PSK)?).*/E$1$2/x;         # DHE -> EDH, ECDHE -> EECDH
+                            _trace5_ (" --> Cipher(3): $keyExchange\n");
+                            $keyExchange =~ s/^(?:EXP[_-])?(?:E|A|EA)((?:EC)?DH(?:_PSK)?).*/$1/x; # EDH -> DH, ADH -> DH, EECDH -> ECDH; EDH_PSK -> DH_PSK, ADH_PSK -> DH_PSK, EECDH_PSK -> ECDH_PSK
+                            _trace2_ (" --> KeyExchange (DH, ECDH, DH_PSK or ECDH_PSK) = $keyExchange\n"); # => ECDH or DH, or ECDH_PSK o DH_PSK
 
-#                           $_SSLhello {hexCodedString($pduVersion)."\|".$sni."\|".hexCodedCipher($lastCipher)."\|ServerKey"} = parseServerKeyExchange ($keyExchange, length($message), $message);
-                            $_SSLhello {'0x0300'.hexCodedCipher($lastCipher)."\|ServerKey"} = parseServerKeyExchange ($keyExchange, length($message), $message);
-                            if (defined ($_SSLhello {'0x0300'.hexCodedCipher($lastCipher)."\|ServerKey"})) {
-
-                                _trace2_("\n   parseHandshakeRecord: Cipher:".hexCodedCipher ($lastCipher)." -> DH_serverParam: ".$_SSLhello {'0x0300'.hexCodedCipher($lastCipher)."\|ServerKey"});
+                            my ($_description, $_param, $_supported_group) = parseServerKeyExchange ($keyExchange, length($message), $message);
+                            if (defined ($_param)) {
+                                _trace2_("\n   parseHandshakeRecord: $host:$port, $client_ssl, Cipher: $lastProtocolCipher -> SeverKey Type: $_description: $_param\n");
                             }
+                            _trace5_ ("#     ---> values of 'supported_groups': " . _decode_val (undef, \@{$_SSLhello{$lastProtocolCipher}{param}{supported_groups}{RX}{values}}, \%osaft::TLS_EXTENSIONS{supported_groups}, 0, 12, ": ", ", ", " | ", " / ") . "\n");
+                            push (@{$_SSLhello{$lastProtocolCipher}{param}{supported_groups}{RX}{values}}, $_supported_group)
+                                 if ( (defined ($_supported_group)) && (!grep {$_supported_group eq $_ } @{$_SSLhello{$lastProtocolCipher}{param}{supported_groups}{RX}{values}}) );
+                                                                    # add new supported_group to array in the result hash
+                            _trace4_ ("#     ---> found 'supported_groups':     " . _decode_val (undef, \@{$_SSLhello{$lastProtocolCipher}{param}{supported_groups}{RX}{values}}, \%osaft::TLS_EXTENSIONS{supported_groups}, 0, 12, ": ", ", ", " | ", " / ") . "\n");
+                            if (! exists ($_SSLhello{$lastProtocolCipher}{param}{ServerKey}{description}) ) {
+                                $_SSLhello{$lastProtocolCipher}{param}{ServerKey}{description} = $_description;
+                                $_SSLhello{$lastProtocolCipher}{param}{supported_groups}{RX}{format_positions}[0] = 1; # -> supported_groups{RX}[1]
+                                @{$_SSLhello{$lastProtocolCipher}{param}{ServerKey}{values}} = ();                     # define the hash; it may stay empty, e.g for PSK (only) keys
+                            } elsif ($_SSLhello{$lastProtocolCipher}{param}{ServerKey}{description} ne $_description) {  ## Error in parseServerKeyExchange: found different types of ServerKeys for the same Cipher
+                                carp ("**WARNING: SSLhello::parseHandshakeRecord: found different types of ServerKeys for the same Cipher '$lastProtocolCipher': '$_description' != '"
+                                      . $_SSLhello{$lastProtocolCipher}{param}{ServerKey}{description} . "'\n");
+                                $_SSLhello{$lastProtocolCipher}{param}{ServerKey}{description} .= " ## " . $_description; # segregate next parameter with '##'
+                                $_param = " ## " . $_param;         # segregate next parameter with '##'
+                            }
+                            push (@{$_SSLhello{$lastProtocolCipher}{param}{ServerKey}{values}}, $_param)
+                                 if ( (defined ($_param)) && ($_param ne "")
+                                      && (!grep {$_param eq $_ } @{$_SSLhello{$lastProtocolCipher}{param}{ServerKey}{values}}) );
+                                                                    # add new ServerKey parameters to an array in the result hash
                         } else { # no cipher found
-                            _trace2 ("parseHandshakeRecord: No name found for cipher: >0x3000".hexCodedCipher($lastCipher)."< -> counld NOT check the ServerKeyExchange\n");
-                            $_SSLhello{'0x0300'.hexCodedCipher($lastCipher)."\|ServerKey"} = "---unknown--";
+                            _trace2 ("parseHandshakeRecord: No name found for cipher: >$lastProtocolCipher< -> counld NOT check the ServerKeyExchange\n");
+                            push (@{$_SSLhello{$lastProtocolCipher}{param}{ServerKey}{values}}, "---unknown---");
                         }
                     } elsif ($serverHello{'msg_type'} == $HANDSHAKE_TYPE {'certificate'}) {
-                         _trace2("parseHandshakeRecord: MessageType \"Certificate\" = ".sprintf("0x%02X", $serverHello{'msg_type'}) . " not yet analyzed\n");
+                         _trace2("parseHandshakeRecord: MessageType \"Certificate\" = ".sprintf("0x%02X", $serverHello{'msg_type'}) . " not yet analysed\n");
                     } elsif ($serverHello{'msg_type'} == $HANDSHAKE_TYPE {'certificate_request'}) {
-                         _trace2("parseHandshakeRecord: MessageType \"Certificate request\" = ".sprintf("0x%02X", $serverHello{'msg_type'}) . " not yet analyzed\n");
+                         _trace2("parseHandshakeRecord: MessageType \"Certificate request\" = ".sprintf("0x%02X", $serverHello{'msg_type'}) . " not yet analysed\n");
                     } elsif ($serverHello{'msg_type'} == $HANDSHAKE_TYPE {'server_hello_done'}) {
                          _trace4("parseHandshakeRecord: MessageType \"ServerHelloDone\" = ".sprintf("0x%02X", $serverHello{'msg_type'}) . " -> Final hello Message\n");
                          last; # hello message phase of the handshake is completed
                     } else {
-                        _trace2("parseHandshakeRecord: MessageType ".sprintf("%02X", $serverHello{'msg_type'}) . " not yet analyzed\n");
+                        _trace2("parseHandshakeRecord: MessageType ".sprintf("%02X", $serverHello{'msg_type'}) . " not yet analysed\n");
                     }
                     _trace2_("\n"); # next message
                 } # while (nextMessages ne ""()
-                return ($cipher,$lastMsgType, 0,"");
+                return ($nextMessages.$buffer, $lastMsgType, 0, "", $cipher);
             } elsif ($recordType == $RECORD_TYPE {'alert'}) {
                 $serverHello{'msg_type'} = 0;           # NO Handshake => set 0
                 $serverHello{'msg_len_3rd_byte'} = 0;   # NO Handshake => set 0
@@ -4224,25 +5655,13 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                 _trace2_ ("# -->      Level:       $serverHello{'level'}\n");
                 _trace2_ ("# -->      Description: $serverHello{'description'} ($description)\n");
 
-                if ($recordVersion == 0x0000) { # some servers use this dummy version to indicate that the requested version is not supported
-                    if (! defined $ssl_client) {
-                        $ssl_client = "--unknown protocol--";
-                    }
-                    OSaft::error_handler->new( {
-                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
-                        id      => 'parse alert record (1)',
-                        message => sprintf ("unsupported protocol $ssl_client (0x%04X) by $host:$port, answered with (0x%04X)", $client_protocol, $recordVersion),
-                        warn    => 0,
-                    } );
-                    return ("", $lastMsgType, 0 , "");
-                }
                 # error handling according to # http://www.iana.org/assignments/tls-parameters/tls-parameters-6.csv
                 unless ( ($serverHello{'level'} == 2) &&
                         (  ($serverHello{'description'} == 40) # handshake_failure(40): usually cipher not found is suppressed
                            || ($serverHello{'description'} == 71) # insufficient_security(71): no (secure) cipher found, is suppressed
                         ) ) {
                     if ($serverHello{'level'} == 1) { # warning
-                        if ($serverHello{'description'} == 112) { #SNI-Warning: unrecognized_name
+                        if ($serverHello{'description'} == 112) { #SNI-Warning: unrecognised_name
                             if ( ($Net::SSLhello::usesni) && !( ( ($client_protocol == $PROTOCOL_VERSION{'SSLv3'}) && (!$Net::SSLhello::force_TLS_extensions) ) || ($client_protocol == $PROTOCOL_VERSION{'SSLv2'}) ) ) {           # SNI sent
                                 $sni = "";
                                 unless ($Net::SSLhello::use_sni_name) {
@@ -4250,25 +5669,28 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                                 } else {                        # different sni_name
                                     $sni = ($Net::SSLhello::sni_name) ? "'$Net::SSLhello::sni_name'" : "''"; # allow empty nonRFC-SNI-Names
                                 }
-                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($ssl_client): received SSL/TLS warning: Description: $description ($serverHello{'description'}) -> check of virtual server $sni aborted!\n");
+                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($client_ssl): received SSL/TLS warning: Description: $description ($serverHello{'description'}) -> check of virtual server $sni aborted!\n");
                                 _trace4 ($my_error);
                                 carp ("**WARNING: $my_error\n");
                             } else {                            # NO SNI extension sent
-                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($ssl_client): received SSL/TLS warning: Description: $description ($serverHello{'description'}), but NO SNI extension has been sent. -> check of server aborted!");
+                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($client_ssl): received SSL/TLS warning: Description: $description ($serverHello{'description'}), but NO SNI extension has been sent. -> check of server aborted!");
                                 _trace4 ($my_error);
                                 carp ("**WARNING: $my_error\n");
-                                _hint ("Server seens to to be a virtual server, consider adding the option '--sni' (Server Name Indication)for TLSv1 and higher");
+                                _hint ("Server seens to to be a virtual server, consider adding the option '--sni' (Server Name Indication) for TLSv1 and higher");
                             }
-                            return ("", $lastMsgType, 0 , "");
+                            return ("", $lastMsgType, 0 , "", "");
+                        } elsif ($serverHello{'description'} == 0) { # closure alert: close_notify is suppressed
+                            _trace2_ ("parseHandshakeRecord: Server '$host:$port' ($client_ssl): received SSL/TLS closure alert (1) has been ignored: Description: $description ($serverHello{'description'})\n");
                         } else {
-                            carp ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($ssl_client): received SSL/TLS warning (1): Description: $description ($serverHello{'description'})\n");
+                            _trace4_ ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($client_ssl): received SSL/TLS warning (1): Description: $description ($serverHello{'description'})\n");
+                            carp ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($client_ssl): received SSL/TLS warning (1): Description: $description ($serverHello{'description'})\n");
                         }
                     } elsif ($serverHello{'level'} == 2) { # fatal
-                        if ($serverHello{'description'} == 70) { # protocol_version(70): (old) protocol recognized but not supported, is suppressed
+                        if ($serverHello{'description'} == 70) { # protocol_version(70): (old) protocol recognised but not supported, is suppressed
                             OSaft::error_handler->new( {
                                 type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
                                 id      => 'parse alert record (2)',
-                                message => sprintf ("unsupported protocol $ssl_client (0x%04X) by $host:$port: received a SSL/TLS-Warning: Description: $description ($serverHello{'description'})", $client_protocol),
+                                message => sprintf ("unsupported protocol $client_ssl (0x%04X) by $host:$port: received a SSL/TLS-Warning: Description: $description ($serverHello{'description'})", $client_protocol),
                                 warn    => 0,
                             } );
                         } elsif ($serverHello{'description'} == 112) { #SNI-Warning: unrecognized_name
@@ -4279,229 +5701,105 @@ sub parseHandshakeRecord ($$$$$$$;$) {
                                 } else {                            # different sni_name
                                     $sni = ($Net::SSLhello::sni_name) ? "'$Net::SSLhello::sni_name'" : "''"; # allow empty nonRFC-SNI-Names
                                 }
-                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($ssl_client): received fatal SSL/TLS error (2a): Description: $description ($serverHello{'description'}) -> check of virtual server $sni aborted!\n");
+                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($client_ssl): received fatal SSL/TLS error (2a): Description: $description ($serverHello{'description'}) -> check of virtual server $sni aborted!\n");
                                 _trace4 ($my_error);
                                 carp ("**WARNING: $my_error\n");
                             } else {                                # NO SNI extension sent
-                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($ssl_client): received fatal SSL/TLS error (2b): Description: $description ($serverHello{'description'}), but NO SNI extension has been sent. -> check of server aborted!");
+                                $my_error = sprintf ("parseHandshakeRecord: Server '$host:$port' ($client_ssl): received fatal SSL/TLS error (2b): Description: $description ($serverHello{'description'}), but NO SNI extension has been sent. -> check of server aborted!");
                                 _trace4 ($my_error);
                                 carp ("**WARNING: $my_error\n");
                                 _hint ("Server seens to to be a virtual server, consider adding the option '--sni' (Server Name Indication)for TLSv1 and higher");
                             }
-                            return ("", $lastMsgType, 0 , "");
+                            return ("", $lastMsgType, 0 , "", "");
                         } else {
                             _trace4 ($my_error);
-                            carp ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($ssl_client): received fatal SSL/TLS error (2c): Description: $description ($serverHello{'description'})\n");
+                            carp ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($client_ssl): received fatal SSL/TLS error (2c): Description: $description ($serverHello{'description'})\n");
                             if ($serverHello{'description'} == 50) { # decode_error (50)
                                 _hint("The server may not support the extension for elliptic curves (ECC) nor discard it silently, consider adding the option '--ssl-nouseecc'.");
                             }
                         }
                     } else { # unknown
-                        carp ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($ssl_client): received unknown SSL/TLS error level ($serverHello{'level'}): Description: $description ($serverHello{'description'})\n");
+                        carp ("**WARNING: parseHandshakeRecord: Server '$host:$port' ($client_ssl): received unknown SSL/TLS error level ($serverHello{'level'}): Description: $description ($serverHello{'description'})\n");
                     }
                 }
+                if ($recordVersion == 0x0000) { # some servers use this dummy version to indicate that the requested version is not supported
+                    OSaft::error_handler->new( {
+                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
+                        id      => 'parse alert record (1)',
+                        message => sprintf ("unsupported protocol $client_ssl (0x%04X) by $host:$port, answered with (0x%04X)", $client_protocol, $recordVersion),
+                        warn    => 0,
+                    } );
+                    return ("", $lastMsgType, 0 , "", "");
+                }
+            } elsif ($recordType == $RECORD_TYPE {'change_cipher_spec'}) {
+                $serverHello{'msg_type'} = 0;           # NO Handshake => set 0
+                $serverHello{'msg_len_3rd_byte'} = 0;   # NO Handshake => set 0
+                $serverHello{'msg_len'} = 0;            # NO Handshake => set 0
+                $serverHello{'fragment_3rd_byte'} = 0;  # NO Handshake => set 0
+                $serverHello{'fragment_offset'} = 0;    # NO Handshake => set 0
+                $serverHello{'fragment_3rd_byte'} = 0;  # NO Handshake => set 0
+                $serverHello{'fragment_len'} = 0;       # NO Handshake => set 0
+
+                ($serverHello{'payload'},                           # a[$record len]
+                $rest) = unpack("a[$recordLen] a*", $recordData);
+
+                _trace2_ (sprintf (
+                   "# -->     Record-Type 'change_cipher_spec' [Len = %d]:\n".
+                   "# -->       payload:                >%s<\n",
+                   $recordLen,
+                   _sprintf_hex_val ("", \$serverHello{'payload'}, 37),
+                ));
+                return ($rest, $lastMsgType, 0 , "", "");
+            } elsif ($recordType == $RECORD_TYPE {'application_data'}) {
+                $serverHello{'msg_type'} = 0;           # NO Handshake => set 0
+                $serverHello{'msg_len_3rd_byte'} = 0;   # NO Handshake => set 0
+                $serverHello{'msg_len'} = 0;            # NO Handshake => set 0
+                $serverHello{'fragment_3rd_byte'} = 0;  # NO Handshake => set 0
+                $serverHello{'fragment_offset'} = 0;    # NO Handshake => set 0
+                $serverHello{'fragment_3rd_byte'} = 0;  # NO Handshake => set 0
+                $serverHello{'fragment_len'} = 0;       # NO Handshake => set 0
+
+                ($serverHello{'application_data'},                  # a[$record len]
+                $rest) = unpack("a[$recordLen] a*", $recordData);
+
+                _trace2_ (sprintf (
+                   "# -->     Record-Type 'application_data' [Len = %d]:\n".
+                   "# -->       application_data:       >%s<\n",
+                   $recordLen,
+                   _sprintf_hex_val ("", \$serverHello{'application_data'}, 37),
+                ));
             } else { ################################ to get information about record types that are not parsed, yet #############################
                 _trace_ ("\n");
+                _trace_ ("**WARNING: parseHandshakeRecord: Server '$host:$port': Unknown SSL/TLS record type received that is not (yet) defined in Net::SSLhello.pm:\n");
+                _trace_ ("#        Record type:     Unknown value (0x".hexCodedString($recordType)."), not (yet) defined in Net::SSLhello.pm\n");
+                _trace_ ("#        Record version:  $recordVersion (0x".hexCodedString ($recordVersion).")\n");
+                _trace_ ("#        Record len:      $recordLen (0x".hexCodedString ($recordLen).")\n\n");
                 carp ("**WARNING: parseHandshakeRecord: Server '$host:$port': Unknown SSL/TLS record type received that is not (yet) defined in Net::SSLhello.pm:\n");
                 carp ("#        Record type:     Unknown value (0x".hexCodedString($recordType)."), not (yet) defined in Net::SSLhello.pm\n");
                 carp ("#        Record version:  $recordVersion (0x".hexCodedString ($recordVersion).")\n");
                 carp ("#        Record len:      $recordLen (0x".hexCodedString ($recordLen).")\n\n");
+                #($serverHello{'--unknown record type--'},           # a[$record len]
+                # $rest) = unpack("a[$recordLen] a*", $recordData);
+                return ("", $lastMsgType, 0 , "", "");
             }
-            return ("", $lastMsgType, 0 , "");
+            return ($buffer, $lastMsgType, 0 , "", "");
         } #End SSL3/TLS or DTLS
     } else {
         carp ("**WARNING: parseHandshakeRecord: Server '$host:$port': (no SSL/TLS record) : ".hexCodedString ($recordData)."\n");
-        return ("",$lastMsgType, 0 , "");
+        ($serverHello{'--unknown record type--'},           # a[$record len]
+         $rest) = unpack("a[$recordLen] a*", $recordData);
+        return ($rest, $lastMsgType, 0 , "", "");
     }
     carp ("**WARNING: parseHandshakeRecord: Server '$host:$port': Internal error: ".hexCodedString ($recordData)."\n");
-    return ("",$lastMsgType, 0 , "");
+    ($serverHello{'--unknown record type--'},           # a[$record len]
+     $rest) = unpack("a[$recordLen] a*", $recordData);
+    return ($rest, $lastMsgType, 0 , "", "");
 } # parseHandshakeRecord
 
 
-sub parseServerHello ($$$;$) {
-    #? FIXME: <<description missing>> <<POD missing>>
-    # Variable: String/Octet, dass das Server-Hello-Paket enthält  ; second (opional) variable: protocol-version, that the client uses
-    my $host            = shift || "";  # for carp- and trace messages
-    my $port            = shift || "";  # for carp- and trace messages
-    my $buffer          = shift || "";
-    my $client_protocol = shift || "";  # optional
-    my $rest            = "";
-    my $tmp_len         = 0;
-    my $message         = "";
-    my $nextMessages    = "";
-    my %serverHello;
-    my $description     = "";
-    local $my_error     = "";
-
-    if (length ($buffer) >=5) { # received data in the buffer, at least 5 bytes
-        my $firstByte = unpack ("C", $buffer);
-
-        if (defined $client_protocol) {
-            _trace2("parseServerHello: Server '$host:$port': (expected protocol= >".sprintf ("%04X", $client_protocol)."<,\n      >".hexCodedString (substr($buffer,0,48),"       ")."< ...)\n");
-        } else {
-            _trace2("parseServerHello: Server '$host:$port': (any protocol,\n Data=".hexCodedString (substr($buffer,0,48),"       ").")... \n");
-        }
-        _trace4 (sprintf ("parseServerHello: Server '$host:$port': 1. Byte:  %02X\n\n", $firstByte) );
-        if ($firstByte >= 0x80) {   # SSL2 with 2 byte Length
-            _trace2_ ("# -->SSL: Message type SSL2-Msg");
-            ($serverHello{'msg_len'},         # n
-             $serverHello{'msg_type'},        # C
-             $rest) = unpack("n C a*", $buffer);
-
-            $serverHello{'msg_len'} -= 0x8000;  # delete MSB
-
-            _trace2_ (sprintf (
-                "# -->        ParseServerHello(1):\n".
-                "# -->        msg_len:              >%04X<\n".
-                "# -->        msg_type:               >%02X<\n",
-                $serverHello{'msg_len'},
-                $serverHello{'msg_type'}
-            ));
-            _trace4 ("parseServerHello: Server '$host:$port': Rest: >".hexCodedString ($rest)."<\n");
-
-            if ($serverHello{'msg_type'} == $SSL_MT_SERVER_HELLO) {
-                _trace4 ("    Handshake Protocol: SSL2 Server Hello\n");
-                _trace4 ("        Message Type: (Server Hello (2)\n");
-                return (parseSSL2_ServerHello ($host, $port, $rest,$client_protocol)); # cipher_spec-Liste
-            } elsif ($serverHello{'msg_type'} == $SSL_MT_ERROR) { #TBD error handling for ssl2
-                ($serverHello{'err_code'}        # n
-                 ) = unpack("n", $rest);
-
-                _trace2 ("parseServerHello: Server '$host:$port': received a SSLv2-Error-Message, Code: >0x".hexCodedString ($serverHello{'err_code'})."<\n");
-                unless ($serverHello{'err_code'} == 0x0001) { # SSLV2_No_Cipher
-                    carp ("**WARNING: parseServerHello: Server '$host:$port': received a SSLv2-Error_Message: , Code: >0x".hexCodedString ($serverHello{'err_code'})." -> Target Ignored\n");
-                }
-                return ("");
-            } else { # if ($serverHello{'msg_type'} == 0 => NOT supported protocol (?!)
-                $my_error = "    Unknown SSLv2 message type (Dez): ".$serverHello{'msg_type'}.", Msg: >".hexCodedString ($buffer)."< -> Target Ignored\n"; }
-                return ("");
-        } else { # TLS record
-            _trace2_("# -->TLS record layer:\n");
-            ($serverHello{'record_type'},       # C
-             $serverHello{'record_version'},    # n
-             $serverHello{'record_len'},        # n
-### perhaps this could be a good point to start a new function to parse a Message => to check certificates etc later###
-             $serverHello{'msg_type'},          # C
-             $serverHello{'msg_len_3rd_byte'},  # C
-             $serverHello{'msg_len'},           # n
-             $rest) = unpack("C n n C C n a*", $buffer);
-
-            if ($serverHello{'record_type'} == $RECORD_TYPE {'handshake'}) {
-                _trace2_ (sprintf (
-                     "# -->    => SSL3/TLS record type: Handshake  (%02X):\n".
-                     "# -->    record_version:  >%04X<\n".
-                     "# -->    record_len:      >%04X<\n".
-                     "# -->       msg_type:         >%02X<\n".
-                     "# -->       msg_len:         >%02X%04X<\n",
-                       $serverHello{'record_type'},
-                       $serverHello{'record_version'},
-                       $serverHello{'record_len'},
-                       $serverHello{'msg_type'},
-                       $serverHello{'msg_len_3rd_byte'},  # prefetched for record_type handshake
-                       $serverHello{'msg_len'}            # prefetched for record_type handshake
-                ));
-
-                $serverHello{'msg_len'} |= $serverHello{'msg_len_3rd_byte'} <<16 if ($serverHello{'msg_len_3rd_byte'} > 0);
-                _trace ("parseServerHello: >>> WARNING: Server '$host:$port': Received a huge message with $serverHello{'msg_len'} bytes\n") if ($serverHello{'msg_len_3rd_byte'} > 0);
-                carp   ("parseServerHello: >>> WARNING: Server '$host:$port': Received a huge message with $serverHello{'msg_len'} bytes\n") if ($serverHello{'msg_len_3rd_byte'} > 0);
-                ($message,                        #a[$serverHello{'msg_len'}]
-                $nextMessages) = unpack("a[$serverHello{'msg_len'}] a*", $rest);
-
-                _trace4_ ( sprintf (
-                    "# --->      message:       >%s<\n",
-                    hexCodedString ($message)
-                ));
-
-                if ($serverHello{'msg_type'} == $HANDSHAKE_TYPE {'server_hello'}) {
-                    _trace3_ ("# -->     Handshake type:    Server Hello (22)\n");
-                    _trace4_ ("# --->    Handshake type:    Server Hello (22)\n");
-
-                    return (parseTLS_ServerHello ($host, $port, $message, $serverHello{'msg_len'},$client_protocol));
-                }
-            } elsif    ($serverHello{'record_type'} == $RECORD_TYPE {'alert'}) {
-                _trace2_ ("# -->  Record type:    Alert (21)\n");
-                _trace2_ (sprintf("# -->  Record version:  $serverHello{'record_version'} (0x%04X)\n",$serverHello{'record_version'}));
-                _trace2_ (sprintf("# -->  Record len:      $serverHello{'record_len'}   (0x%04X)\n",$serverHello{'record_len'}));
-                $serverHello{'msg_type'} = 0;          # KEIN Handshake = löschen
-                $serverHello{'msg_len_3rd_byte'} = 0;  # KEIN Handshake = löschen
-                $serverHello{'msg_len'} = 0;           # KEIN Handshake = löschen
-                ($serverHello{'level'},      # C
-                 $serverHello{'description'} # C
-                ) = unpack("x5 C C", $buffer); # Workaroud, da oben zu viel gelesen wird
-
-                if ($TLS_AlertDescription {$serverHello{'description'}} ) { # defined, no Null-String
-                        $description = $TLS_AlertDescription {$serverHello{'description'}}[0]." ".$TLS_AlertDescription {$serverHello{'description'}}[2];
-                } else {
-                        $description = "Unknown/Undefined";
-                }
-
-                _trace2_ ("# -->  Alert Message:\n");
-                _trace2_ ("# -->      Level:       $serverHello{'level'}\n");
-                _trace2_ ("# -->      Description: $serverHello{'description'} ($description)\n");
-
-                if ($serverHello{'record_version'} == 0x0000) { # some servers use this dummy version to indicate that the requested version is not supported
-                    my %rhash = reverse %PROTOCOL_VERSION;
-                    my $ssl_client = $rhash{$client_protocol};
-                    if (! defined $ssl_client) {
-                        $ssl_client = "--unknown protocol--";
-                    }
-                    $my_error = sprintf ("parseServerHello: Server '$host:$port': requested protocol $ssl_client (0x%04X) is not supported by the Server (the server answered with the protocol 0x%04X) -> protocol_version recognized but not supported!", $client_protocol, $serverHello{'record_version'});
-                    _trace2 ("$my_error\n");
-                    return ("");
-                }
-
-                # error handling according to # http://www.iana.org/assignments/tls-parameters/tls-parameters-6.csv
-                unless ( ($serverHello{'level'} == 2) &&
-                        (  ($serverHello{'description'} == 40) # handshake_failure(40): usually cipher not found is suppressed
-                           || ($serverHello{'description'} == 71) # insufficient_security(71): no (secure) cipher found, is suppressed
-                        ) ) {
-                    if ($serverHello{'level'} == 1) { # warning
-                        if ($serverHello{'description'} == 112) { #SNI-Warning: unrecognized_name
-                            my $sni = "";
-                            $Net::SSLhello::use_sni_name = 1 if ( ($Net::SSLhello::use_sni_name == 0) && ($Net::SSLhello::sni_name ne "1") ); ###FIX: quickfix until migration of o-saft.pl is compleated (tbd)
-                            unless ($Net::SSLhello::use_sni_name) {
-                                $sni = "'$host'" if ($Net::SSLhello::usesni); # server name, should be a name no IP
-                            } else { # different sni_name
-                                $sni = ($Net::SSLhello::sni_name) ? "'$Net::SSLhello::sni_name'" : "''"; # allow empty nonRFC-SNI-Names
-                            }
-                            $my_error = sprintf ("parseServerHello: Server '$host:$port': received SSL/TLS-Warning: Description: $description ($serverHello{'description'}) -> check of virtual Server $sni aborted!\n");
-                            print $my_error;
-                            return ("");
-                        } else {
-                            carp ("**WARNING: parseServerHello: Server '$host:$port': received SSL/TLS-Warning (1): Description: $description ($serverHello{'description'})\n");
-                        }
-                    } elsif ($serverHello{'level'} == 2) { # fatal
-                        if ($serverHello{'description'} == 70) { # protocol_version(70): (old) protocol recognized but not supported, is suppressed
-                            $my_error = sprintf ("parseServerHello: Server '$host:$port': received SSL/TLS-Warning: Description: $description ($serverHello{'description'}) -> protocol_version recognized but not supported!\n");
-                        } else {
-                            carp ("**WARNING: parseServerHello: Server '$host:$port': received fatal SSL/TLS-Error (2): Description: $description ($serverHello{'description'})\n");
-                            if ($serverHello{'description'} == 50) { # decode_error (50)
-                                _hint("The server may not support the extension for elliptic curves (ECC) nor discard it silently, consider adding the option '--ssl-nouseecc'.");
-                            }
-                        }
-                    } else { # unknown
-                        carp ("**WARNING: parseServerHello: Server '$host:$port': received unknown SSL/TLS-Error-Level ($serverHello{'level'}): Description: $description ($serverHello{'description'})\n");
-                    }
-                }
-            } else { ################################ to get information about record types that are not parsed, yet #############################
-                _trace_ ("\n");
-                carp ("**WARNING: parseServerHello: Server '$host:$port': Unknown SSL/TLS record type received that is not (yet) defined in Net::SSLhello.pm:\n");
-                carp ("#        Record type:     Unknown value (".$serverHello{'record_type'}."), not (yet) defined in Net::SSLhello.pm\n");
-                carp ("#        Record version:  $serverHello{'record_version'} (0x".hexCodedString ($serverHello{'record_version'}).")\n");
-                carp ("#        Record len:      $serverHello{'record_len'} (0x".hexCodedString ($serverHello{'record_len'}).")\n\n");
-            }
-            return ("");
-        } #End SSL3/TLS
-    } else {
-        carp ("**WARNING: parseServerHello Server '$host:$port': (no SSL/TLS record) : ".hexCodedString ($buffer)."\n");
-    }
-    return;
-} # parseServerHello
-
-
 sub parseSSL2_ServerHello ($$$;$) {
-    #? FIXME: <<description missing>> <<POD missing>>
-    # Variable: String/Octet, das den Rest des Server-Hello-Pakets enthält
+    #? <<description missing>> <<POD missing>> # FIXME:
+    # Variable: String/Octett, das den Rest des Server-Hello-Pakets enthält
     my $host            = shift || "";  # for warn- and trace messages
     my $port            = shift || "";  # for warn- and trace messages
     my $buffer          = shift || "";
@@ -4596,31 +5894,40 @@ sub parseSSL2_ServerHello ($$$;$) {
     return ($serverHello{'cipher_spec'});
 } # parseSSL2_ServerHello
 
+=pod
+
+=head2 parseTLS_ServerHello( )
+
+# FIXME: missing
+
+=cut
+
 
 sub parseTLS_ServerHello {
     #? parse and get data from a ServerHello message that has been received via SSLv3 or TLS
     #? according RFC6101 (SSL3), RFC2246 (TLS1), RFC4346 (TLS1.1), RFC5246 (TLS1.2) and draft-ietf-tls-tls13 (TLS1.3)
-    #? FIXME: <<POD missing>>
     #? Variableis:
     #? $host and $port:   used for error and trave messages
     #? $buffer:           unparsed data of the ServerHello
     #? $len:              Len if the buffer
     #? $client_protokoll: optional the protocol used by the client
     #
-    my $host            = shift || ""; #for warn- and trace-messages
-    my $port            = shift || ""; #for warn- and trace-messages
+    my $host            = shift || ""; #for warn and trace messages
+    my $port            = shift || ""; #for warn and trace messages
     my $buffer          = shift || "";
     my $len             = shift || 0;
-    my $client_protocol = shift || "";  # optional
+    my $client_protocol = shift || "";
+    my $server_protocol = "";
     my $rest            = "";
     my $rest2           = "";
     my %serverHello;
+    my $protocolCipher  = "";
 
     $serverHello{'cipher_spec'} = "";
     $serverHello{'extensions_len'} = 0;
 
     #reset error_handler and set basic information for this sub
-    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'parseTLS_ServerHello', print => ($Net::SSLhello::trace > 0), trace => $Net::SSLhello::trace} );
+    OSaft::error_handler->reset_err( {module => (SSLHELLO), sub => 'parseTLS_ServerHello', print => ($Net::SSLhello::trace > 3), trace => $Net::SSLhello::trace} );
 
     if (defined $client_protocol) {
         _trace3("parseTLS_ServerHello: Server '$host:$port': (expected protocol=".sprintf ("%04X", $client_protocol).",\n     ".hexCodedString (substr($buffer,0,48),"       ")."...)\n");
@@ -4635,46 +5942,9 @@ sub parseTLS_ServerHello {
         $serverHello{'session_id_len'},     # C
         $rest) = unpack("n N a[28] C a*", $buffer);
 
-        _trace2_ ( sprintf ( # added to check the supported version
-                "# -->       => SSL/TLS-Version: (%04X):\n",
-                $serverHello{'version'}
-        ));
-
-        if (defined ($client_protocol)) {
-            if ($client_protocol != $serverHello{'version'}) {
-                my %rhash = reverse %PROTOCOL_VERSION;
-                my $ssl_client = $rhash{$client_protocol};
-                my $ssl_server = $rhash{$serverHello{'version'}};
-                if (! defined $ssl_client) {
-                    $ssl_client = "--unknown protocol--";
-                }
-                if (! defined $ssl_server) {
-                    $ssl_server = "--unknown protocol--";
-                }
-                if ($serverHello{'version'} == 0) {
-                    # some servers respond with the dummy prtotocol '0x0000' if they do *not* support the requested protocol
-                    OSaft::error_handler->new( {
-                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
-                        id      => 'check record protocol (1)',
-                        message => sprintf ("unsupported protocol $ssl_client (0x%04X) by $host:$port, answered with $ssl_server (0x%04X)", $client_protocol, $serverHello{'version'}),
-                        warn    => 0,
-                    } );
-                } else { # unknown protocol
-                    OSaft::error_handler->new( {
-                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
-                        id      => 'check record protocol (2)',
-                        message => sprintf ("unsupported protocol $ssl_client (0x%04X) by $host:$port, answered with $ssl_server (0x%04X)", $client_protocol, $serverHello{'version'}),
-                        warn    => 0,
-                    } );
-                }
-                return ("");
-            }
-        } else {
-            carp ("**WARNING: parseTLS_ServerHello: Server '$host:$port': internal error: All Server Versions are accepted, because there is no information provided which version the client has requested.\n");
-        }
 
         _trace2_ ( sprintf (
-                "# -->       version:           >%04X<\n".
+                "# -->       (legacy) version:  >%04X<\n".
         #        "# -->       random_gmt_time:  >%08X< (%s)\n".
                 "# -->       random_gmt_time:   >%08X<\n".
                 "# -->       random:            >%s<\n".
@@ -4685,12 +5955,11 @@ sub parseTLS_ServerHello {
                 hexCodedString ($serverHello{'random'}),
                 $serverHello{'session_id_len'}
         ));
-        _trace4_ ( sprintf (
+        _trace5_ ( sprintf (
                 "# -->       Rest: (len=%04X)   >%s<\n",
                 length ($rest),
                 hexCodedString ($rest, "                                    ")
         ));
-
         ($serverHello{'session_id'},        # A[]
         $serverHello{'cipher_spec'},        # A2: cipher_spec_len = 2
         $serverHello{'compression_method'}, # C
@@ -4706,29 +5975,28 @@ sub parseTLS_ServerHello {
         ));
 
         ### added to check if there is a bug in getting the cipher_spec: cipher_spec_len = 2 ###
-        if (length ($serverHello{'cipher_spec'}) !=  2 ) { # did not get the 2-Octet-Cipher?
+        if (length ($serverHello{'cipher_spec'}) !=  2 ) { # did not get the 2-octet-cipher?
             carp("**WARNING: parseTLS_ServerHello: Server '$host:$port': Can't get the Cipher from Server-Hello (String-Len: ".length ($serverHello{'cipher_spec'})." != cipher_spec_len: 2): >". hexCodedString ($serverHello{'cipher_spec'})."<");
         }
-        _trace2_ ( sprintf (
-            # added to check the supported version
-            "# -->       The Server Server '$host:$port': accepts the following Cipher(s) with SSL3/TLS-Version: >%04X<:\n",
-            $serverHello{'version'}
-        ));
-
-        if ($Net::SSLhello::trace > 2) {
+        $protocolCipher = '0x0300'.hexCodedCipher($serverHello{cipher_spec});
+        if ($Net::SSLhello::trace > 3) {
             printTLSCipherList ($serverHello{'cipher_spec'});
         }
 
         _trace2_ ( sprintf (
-            "\n# -->       compression_method:   >%02X<\n",
-            $serverHello{'compression_method'}
+              "\n# -->       compression_method:   >%02X<\n",
+                $serverHello{'compression_method'}
         ));
+
+        # check the tls extensions:
+        my %_param_tmp_hash = ();
+        %_param_tmp_hash = %{$_SSLhello{$protocolCipher}{param}} if (exists ($_SSLhello{$protocolCipher}{param}));# save the param hash, just in case of a protocol mismatch
         if ( $serverHello{'extensions_len'} !~ /(?:^$|[\x00]+)/x) { # extensions_len > 0
             ($serverHello{'extensions'},            # A[]
             $rest) = unpack("a[$serverHello{'extensions_len'}] a*", $rest2);
 
             _trace2_ ( sprintf (
-                "# -->       extensions_len:   >%04X<\n",
+                "# -->       extensions_len:     >%04X<\n",
                 $serverHello{'extensions_len'}
             ));
 
@@ -4738,56 +6006,63 @@ sub parseTLS_ServerHello {
                 hexCodedString ($serverHello{'extensions'}),
                 hexCodedString ($rest)
             ));
-            parseTLS_Extension ($serverHello{'extensions'}, $serverHello{'extensions_len'});
-
+            _parseExtensions ("RX", \%{$_SSLhello{$protocolCipher}{param}}, \$serverHello{'extensions'}, $serverHello{'extensions_len'}, $protocolCipher);
             if  (length($rest) > 0) { # should be 0
                 _trace2 ( sprintf ("\n\n## parseTLSServerHello Server '$host:$port': did not parse the whole message (rest): >".hexCodedString ($rest)."< To Be Done\n"));
             }
         }
+        # Check the protocol version (client vs server)
+#        $client_protocol = 0x0303 if ($client_protocol == 0x0304); # Quick Patch for TLS 1.2; TBD: DTLS!check record_protocol, extension_protocol
+        # get version from extension 'supported_versions' if it has been received : if not use legacy version from record
+        $server_protocol = (defined ($_SSLhello{$protocolCipher}{param}{supported_versions}{RX}{values}[$#{$_SSLhello{$protocolCipher}{param}{supported_versions}{RX}{values}}]))
+                                   ? $_SSLhello{$protocolCipher}{param}{supported_versions}{RX}{values}[$#{$_SSLhello{$protocolCipher}{param}{supported_versions}{RX}{values}}]
+                                   : $serverHello{'version'};
+        _trace5_ ( sprintf ( # added to check the supported version
+                "# -->       => check server SSL/TLS-Version: legacy: %04X / effective %04X vs client: %04X\n",
+                 $serverHello{'version'}, $server_protocol, $client_protocol
+        ));
+        if (defined ($client_protocol)) {
+            if ($client_protocol != $server_protocol) {
+                my $client_ssl = $PROTOCOL_NAME_BY_HEX{$client_protocol};
+                my $server_ssl = $PROTOCOL_NAME_BY_HEX{$server_protocol};
+                if (! defined $client_ssl) {
+                    $client_ssl = "--unknown protocol--";
+                }
+                if (! defined $server_ssl) {
+                    $server_ssl = "--unknown protocol--";
+                }
+                _trace5_ (" " x 9 . "# --> parseTLSServerHello Server '$host:$port': protocol mismatch (expected $client_ssl != $server_ssl). Restoring hash \%{\$_SSLhello{$protocolCipher}{cipher_spec}{param}}.\n");
+                $_SSLhello{$protocolCipher}{param} = \%_param_tmp_hash;
+                if ($server_protocol == 0) {
+                    # some servers respond with the dummy prtotocol '0x0000' if they do *not* support the requested protocol
+                    OSaft::error_handler->new( {
+                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
+                        id      => 'check record protocol (1)',
+                        message => sprintf ("unsupported protocol $client_ssl (0x%04X) by $host:$port, answered with $server_ssl (0x%04X)", $client_protocol, $server_protocol),
+                        warn    => 0,
+                    } );
+                } else { # unknown protocol
+                    OSaft::error_handler->new( {
+                        type    => (OERR_SSLHELLO_ABORT_PROTOCOL),
+                        id      => 'check record protocol (2)',
+                        message => sprintf ("unsupported protocol $client_ssl (0x%04X) by $host:$port, answered with $server_ssl (0x%04X)", $client_protocol, $server_protocol),
+                        warn    => 0,
+                    } );
+                }
+                return ("");
+            }
+        } else {
+            carp ("**WARNING: parseTLS_ServerHello: server '$host:$port': internal error: All server protocol versions are accepted, because there is no information provided which version the client has requested.\n");
+        }
+        _trace2_ ( sprintf (
+            # added to check the supported version
+            "# --> The server '$host:$port': accepts the following cipher(s) with SSL3/TLS-version: >%04X<:\n", $server_protocol
+        ));
         return ($serverHello{'cipher_spec'});
     } else {
         return ("");
     }
 } # parseTLS_ServerHello
-
-
-sub parseTLS_Extension {
-    #? FIXME: <<description missing>> <<POD missing>>
-    # Variable: String/Octet, das die Extension-Bytes enthält
-    my $buffer = shift || "";
-    my $len    = shift || 0;
-
-    my $rest   = "";
-    my %serverHello;
-
-    if (length($buffer) || $len >= 2) {
-        ($serverHello{'extension_type'},     # n
-         $serverHello{'extension_type_len'}, # n
-         $rest) = unpack("n n a*", $buffer);
-
-         _trace2_ ( sprintf (
-            "# -->       extension_type:      >%04X<\n".
-            "# -->       extension_type_len:  >%04X<\n",
-            $serverHello{'extension_type'},
-            $serverHello{'extension_type_len'}
-        ));
-        if (($rest) && ($serverHello{'extension_type_len'}) ) {
-            ($serverHello{'extension_data'},    # A[]
-            $rest) = unpack("a[$serverHello{'extension_type_len'}] a*", $rest);
-
-              _trace2_ ( sprintf (
-                "# -->           extension_data:  >%s<\n".
-                "# -->           Rest:            >%s<\n",
-                hexCodedString ($serverHello{'extension_data'}),
-                hexCodedString ($rest)
-            ));
-            if (($rest) && (($len -4 -$serverHello{'extension_type_len'}) >0) ) {
-                parseTLS_Extension ($rest, ($len -4 -$serverHello{'extension_type_len'}));
-            }
-        }
-    }
-    return;
-} # parseTLS_Extension
 
 
 sub _timedOut {
@@ -4798,13 +6073,13 @@ sub _chomp_r { # chomp \r\n
     my $string = shift || "";
     $string =~ s/(.*?)\r?\n?$/$1/gx;
     if ($string =~ /[^\x20-\x7E\t\r\n]/x) { # non printable charachers in string
-        $string =~ s/([\x00-\xFF])/sprintf("%02X ", ord($1))/eigx; #Code all Octets as HEX values and seperate then with a 'space'
+        $string =~ s/([\x00-\xFF])/sprintf("%02X ", ord($1))/eigx; # code all octets as HEX values and separate them with a 'space'
     }
     return ($string);
 }
 
 sub hexCodedString {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     # Variable: String/Octet, der in HEX-Werten dargestellt werden soll, gibt Ausgabestring zurück
     my $codedString = shift || "";
     my $prefix      = shift; # set an optional prefix after '\n'
@@ -4812,7 +6087,7 @@ sub hexCodedString {
     if (!defined($prefix)) { # undefined -> ""
             $prefix = "";
     }
-    $codedString =~ s/([\x00-\xFF])/sprintf("%02X ", ord($1))/eigx; # code all octets as HEX values and seperate then with a 'space'
+    $codedString =~ s/([\x00-\xFF])/sprintf("%02X ", ord($1))/eigx; # code all octets as HEX values and separate then with a 'space'
     $codedString =~ s/((?:[0-9A-Fa-f]{2}\s){48})(?=[0-9A-Fa-f]{2})/"$1\n$prefix"/eigx; # add a new line each 48 HEX-octetts (=144 symbols incl. spaces) if not last octett reached
     chomp ($codedString); # delete CR at the end
     chop ($codedString);  # delete 'space' at the end
@@ -4821,7 +6096,7 @@ sub hexCodedString {
 
 
 sub hexCodedCipher {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     # Variable: String/Octet, der in HEX-Werten dargestellt werden soll, gibt Ausgabestring zurück
     my $codedString= shift || "";
     my $prefix= shift; # set an optional prefix after '\n'
@@ -4829,7 +6104,7 @@ sub hexCodedCipher {
     if (!defined($prefix)) { # undefined -> ""
             $prefix = "";
     }
-    $codedString =~ s/([\x00-\xFF])/sprintf("%02X", ord($1))/eigx; # code all octets as HEX values and seperate then with a 'space'
+    $codedString =~ s/([\x00-\xFF])/sprintf("%02X", ord($1))/eigx; # code all octets as HEX values and separate then with a 'space'
     $codedString =~ s/((?:[0-9A-Fa-f]{2}){64})/"$1\n$prefix"/eigx; # add a new line each 64 HEX octetts (=128 symbols incl. spaces)
     chomp ($codedString); #delete CR at the end
     return ($codedString); #delete 'space' at the end
@@ -4837,7 +6112,7 @@ sub hexCodedCipher {
 
 
 sub hexCodedSSL2Cipher {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     # Variable: String/Octet, der in HEX-Werten dargestellt werden soll, gibt Ausgabestring zurück
     my $codedString = shift || "";
     my $prefix      = shift; # set an optional prefix after '\n'
@@ -4845,22 +6120,22 @@ sub hexCodedSSL2Cipher {
     if (!defined($prefix)) { # undefined -> ""
             $prefix = "";
     }
-    $codedString =~ s/([\x00-\xFF])([\x00-\xFF])([\x00-\xFF])/sprintf("%02X%02X%02X ", ord($1), ord($2), ord($3))/eigx; #Code all 3-Octet-Ciphers as HEX value-Pairs and separate then with a 'space'
+    $codedString =~ s/([\x00-\xFF])([\x00-\xFF])([\x00-\xFF])/sprintf("%02X%02X%02X ", ord($1), ord($2), ord($3))/eigx; # code all 3-octet-ciphers as HEX value pairs and separate them with a 'space'
     $codedString =~ s/((?:[0-9A-Fa-f]{6}){16}\s)/"$1\n$prefix"/eigx; # add a new line each 16 ciphers (=112 symbols incl. spaces)
-    chomp ($codedString); #delete CR at the end
-    return ($codedString); #delete 'space' at the end
+    chomp ($codedString);   # delete CR at the end
+    return ($codedString);  # delete 'space' at the end
 }
 
 sub hexCodedTLSCipher {
-    #? FIXME: <<description missing>> <<POD missing>>
-    # Variable: String/Octet, der in HEX-Werten dargestellt werden soll, gibt Ausgabestring zurück
+    #? <<description missing>> <<POD missing>> # FIXME:
+    # Variable: String/Octett, der in HEX-Werten dargestellt werden soll, gibt Ausgabestring zurück
     my $codedString = shift || "";
     my $prefix      = shift; # set an optional prefix after '\n'
     return ("") if ($codedString eq "");
     if (!defined($prefix)) { # undefined -> ""
             $prefix = "";
     }
-    $codedString =~ s/([\x00-\xFF])([\x00-\xFF])/sprintf("%02X%02X ", ord($1), ord($2))/eigx; # code all 2-Octet-Ciphers as HEX value pairs and separate then with a 'space'
+    $codedString =~ s/([\x00-\xFF])([\x00-\xFF])/sprintf("%02X%02X ", ord($1), ord($2))/eigx; # code all 2-octet-ciphers as HEX value pairs and separate then with a 'space'
     $codedString =~ s/((?:[0-9A-Fa-f]{4}){16}\s)/"$1\n$prefix"/eigx; # add a new line each 16 ciphers (=80 symbols incl. spaces)
     chomp ($codedString);  # delete CR at the end
     return ($codedString); # delete 'space' at the end
@@ -4868,7 +6143,7 @@ sub hexCodedTLSCipher {
 
 
 sub compileSSL2CipherArray ($) {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     my $cipherList  = shift || "";
     my $protocolCipher="";
     my $firstByte   = "";
@@ -4888,7 +6163,7 @@ sub compileSSL2CipherArray ($) {
         } else { # V2Cipher
             $protocolCipher = pack ("a4a*", "0x02", hexCodedCipher($cipherTable[$i]));
         }
-        if ($Net::SSLhello::trace > 2) {
+        if ($Net::SSLhello::trace > 3) {
             if ($cipherHexHash {$protocolCipher} ) { # defined, no Null-String
                 _trace_ (sprintf "%s -> %-32s -> %s", $protocolCipher, $cipherHexHash {$protocolCipher}[1], $cipherHexHash {$protocolCipher}[0]);
             } else {
@@ -4904,7 +6179,7 @@ sub compileSSL2CipherArray ($) {
 
 
 sub compileTLSCipherArray ($) {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     my $cipherList  = shift || "";
     my $protocolCipher = "";
     my $firstByte   = "";
@@ -4919,7 +6194,7 @@ sub compileTLSCipherArray ($) {
         _trace4_ (sprintf ("           Cipher[%2d]: ", $i));
         _trace4_ (sprintf (" >".hexCodedCipher ($cipherTable[$i])."< -> "));
         $protocolCipher = pack ("a6a*", "0x0300", hexCodedCipher($cipherTable[$i]));
-        if ($Net::SSLhello::trace > 2) {
+        if ($Net::SSLhello::trace > 3) {
             if ( (defined ($cipherHexHash {$protocolCipher})) && ($#{$cipherHexHash {$protocolCipher}}>0) ) { # definiert, max index >0
                 _trace4_ (sprintf ("%s -> %-32s -> %s", $protocolCipher, $cipherHexHash {$protocolCipher}[1], $cipherHexHash {$protocolCipher}[0]));
             } else {
@@ -4935,7 +6210,7 @@ sub compileTLSCipherArray ($) {
 
 
 sub printSSL2CipherList ($) {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     my $cipherList  = shift || "";
     my $protocolCipher = "";
     my $firstByte   = "";
@@ -4971,7 +6246,7 @@ sub printSSL2CipherList ($) {
 
 
 sub printTLSCipherList ($) {
-    #? FIXME: <<description missing>> <<POD missing>>
+    #? <<description missing>> <<POD missing>> # FIXME:
     my $cipherList  = shift || "";
     my $protocolCipher = "";
 
@@ -4999,6 +6274,42 @@ sub printTLSCipherList ($) {
     return;
 } # printTLSCipherList
 
+#_____________________________________________________________________________
+#_____________________________________________________________________ main __|
+
+sub _main_help  {
+    #? print own help
+    # if ($#argv < 0) { _main_help(); exit 0; }
+    printf("# %s %s\n", __PACKAGE__, $VERSION);
+    if (eval {require Pod::Perldoc;}) {
+        # pod2usage( -verbose => 1 );
+        exit( Pod::Perldoc->run(args=>[$0]) );
+    }
+    if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
+        # may return:  You need to install the perl-doc package to use this program.
+        printf("# no Pod::Perldoc installed, please try:\n  perldoc $0\n");
+    }
+    return;
+} # _main_help
+
+sub _main       {
+    my @argv = @_;
+    ## no critic qw(InputOutput::RequireEncodingWithUTF8Layer)
+    #  SEE Perl:binmode()
+    binmode(STDOUT, ":unix:utf8");
+    binmode(STDERR, ":unix:utf8");
+    local $\="\n";
+    if ($#argv < 0) { _main_help(); exit 0; }
+    # got arguments, do something special; any -option or +command exits
+    while (my $arg = shift @argv) {
+        if ($arg =~ /^--?h(?:elp)?$/)       { _main_help();         }
+        if ($arg =~ /^[+-]?version/i)       { print "$VERSION";     }
+        if ($arg =~ /^--test.?init/)        { printParameters();    }
+        if ($arg =~ /^[+-]/)                { exit 0; } # silently ignore unknown options
+    }
+    exit 0;
+} # _main
+
 
 =pod
 
@@ -5013,6 +6324,8 @@ See DESCRIPTION above.
 =head1 DEENDENCIES
 
 L<IO::Socket(1)>
+L<IO::Socket::INET(1)>
+L<OSaft::error_handler>
 
 =head1 SEE ALSO
 
@@ -5027,18 +6340,10 @@ L<IO::Socket(1)>
 sub net_sslhello_done() {};     # dummy to check successful include
 ## PACKAGE }
 
-unless (defined caller) {       # print myself or open connection
-    printf("# %s %s\n", __PACKAGE__, $VERSION);
-    if (eval {require POD::Perldoc;}) {
-        # pod2usage( -verbose => 1 );
-        exit( Pod::Perldoc->run(args=>[$0]) );
-    }
-    if (qx(perldoc -V)) {
-        # may return:  You need to install the perl-doc package to use this program.
-        #exec "perldoc $0"; # scary ...
-        printf("# no POD::Perldoc installed, please try:\n  perldoc $0\n");
-        exit 0;
-    }
-}
+#_____________________________________________________________________________
+#_____________________________________________________________________ self __|
+
+
+_main(@ARGV) if (not defined caller);
 
 1;

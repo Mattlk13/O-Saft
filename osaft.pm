@@ -2,21 +2,22 @@
 
 # TODO: implement
 #    require "o-saft-lib" "full";  # or "raw"
-#	full: anything for o-saft.pl; raw partial for SSLhello.pm
+#       full: anything for o-saft.pl; raw partial for SSLhello.pm
 # TODO: see comment at %cipher_names
 
 ## PACKAGE {
 
-#!# Copyright (c) 2019, Achim Hoffmann, sic[!]sec GmbH
+#!# Copyright (c) 2021, Achim Hoffmann
 #!# This  software is licensed under GPLv2. Please see o-saft.pl for details.
 
 package osaft;
 
 use strict;
 use warnings;
+use utf8;
 
 use constant {
-    OSAFT_VERSION   => '19.12.19',  # official version number of this file
+    OSAFT_VERSION   => '21.03.21',  # official version number of this file
   # STR_VERSION => 'dd.mm.yy',      # this must be defined in calling program
     STR_ERROR   => "**ERROR: ",
     STR_WARN    => "**WARNING: ",
@@ -26,7 +27,7 @@ use constant {
     STR_UNDEF   => "<<undef>>",
     STR_NOTXT   => "<<>>",
     STR_MAKEVAL => "<<value not printed (OSAFT_MAKE exists)>>",
-    SID_osaft   => "@(#) osaft.pm 1.199 19/12/04 20:20:47",
+    SID_osaft   => "@(#) osaft.pm 1.251 21/04/14 23:23:24",
 
 };
 
@@ -41,7 +42,7 @@ use constant {
 
 # HACKER's INFO
 #       Following (internal) functions from o-saft.pl are used:
-#	_ispfs()
+#       _is_ssl_pfs()
 
 ## no critic qw(Documentation::RequirePodSections)
 #  our POD below is fine, perlcritic (severity 2) is too pedantic here.
@@ -59,7 +60,8 @@ o-saft-lib -- common perl modul for O-Saft and related tools
 =over 2
 
 =item use osaft;                  # in perl code
-=item o-saft-lib.pm --help        # on command line will print help
+
+=item o-saft-lib.pm --help        # on command-line will print help
 
 =back
 
@@ -99,6 +101,8 @@ otherwise the calling script must handle warnings properly.
 
 =over 4
 
+=item --help
+
 =item --regex, --test-regex
 
 =back
@@ -124,6 +128,12 @@ Following functions (methods) must be defined in the calling program:
 =item _trace3( )
 
 =back
+
+=head1 NOTES
+
+It's often recommended not to export constants and variables from modules, see
+for example  http://perldoc.perl.org/Exporter.html#Good-Practices . The main
+purpose of this module is defining variables. Hence we export them.
 
 =head1 CONSTANTS
 
@@ -163,7 +173,7 @@ Following functions (methods) must be defined in the calling program:
 
 =item %tls_error_alerts
 
-=item %tls_extensions
+=item %TLS_EXTENSIONS
 
 =item %tls_curve_types
 
@@ -188,9 +198,6 @@ Following functions (methods) must be defined in the calling program:
 =back
 
 =head1 METHODS
-
-Only getter and setter methods are exported. All other methods must be used
-with the full package name.
 
 =cut
 
@@ -220,7 +227,14 @@ our @EXPORT     = qw(
                 %tls_handshake_type
                 %tls_record_type
                 %tls_error_alerts
-                %tls_extensions
+                %TLS_EXTENSIONS
+                %TLS_EC_POINT_FORMATS
+                %TLS_MAX_FRAGMENT_LENGTH
+                %TLS_NAME_TYPE
+                %TLS_PROTOCOL_VERSION
+                %TLS_PSK_KEY_EXCHANGE_MODE
+                %TLS_SIGNATURE_SCHEME
+                %TLS_SUPPORTED_GROUPS
                 %tls_curve_types
                 %tls_curves
                 @target_defaults
@@ -275,13 +289,13 @@ our @EXPORT     = qw(
                 set_target_stop
                 set_target_error
                 sort_cipher_names
-                set_hint
-                printhint
-                osaft_done
                 tls_const2text
                 tls_key2text
                 tls_text2key
+                printhint
+                print_pod
 );
+# not yet exported: osaft_sleep osaft_done
 # insert above in vi with:
 # :r !sed -ne 's/^sub \([a-zA-Z][^ (]*\).*/\t\t\1/p' %
 # :r !sed -ne 's/^our \([\%$@][a-zA-Z0-9_][^ (]*\).*/\t\t\1/p' %
@@ -315,7 +329,7 @@ our %prot   = (     # collected data for protocols and ciphers
     #   "protocol"=> {cipher_pfs, ciphers_pfs, default, cipher_strong, cipher_weak}
     # Notes:
     #  TLS1FF   0x03FF  # last possible version of TLS1.x (not specified, used internal)
-    #  DTLSv09: 0x0100  # DTLS, OpenSSL pre 0.9.8f, not finally standardized; some versions use 0xFEFF
+    #  DTLSv09: 0x0100  # DTLS, OpenSSL pre 0.9.8f, not finally standardised; some versions use 0xFEFF
     #  DTLSv09: -dtls   # never defined and used in openssl
     #  DTLSv1   0xFEFF  # DTLS1.0 (udp)
     #  DTLSv11  0xFEFE  # DTLS1.1: has never been used (udp)
@@ -348,11 +362,11 @@ our %tls_handshake_type = (
     0 => 'hello_request',
     1 => 'client_hello',
     2 => 'server_hello',
-    3 => 'hello_verify_request',    # RFC4347 DTLS
+    3 => 'hello_verify_request',    # RFC 4347 DTLS
     4 => 'new_session_ticket',
 #   4 => 'NewSessionTicket',
-    6 => 'hello_retry_request',     # RFC8446
-    8 => 'encrypted_extensions',    # RFC8446
+    6 => 'hello_retry_request',     # RFC 8446
+    8 => 'encrypted_extensions',    # RFC 8446
    11 => 'certificate',
    12 => 'server_key_exchange',
    13 => 'certificate_request',
@@ -360,11 +374,11 @@ our %tls_handshake_type = (
    15 => 'certificate_verify',
    16 => 'client_key_exchange',
    20 => 'finished',
-   21 => 'certificate_url',         # RFC6066 10.2
-   22 => 'certificate_status',      # RFC6066 10.2
-   23 => 'supplemental_data',       # RFC??
-   24 => 'key_update',              # RFC8446
-  254 => 'message_hash',            # RFC8446
+   21 => 'certificate_url',         # RFC 6066 10.2
+   22 => 'certificate_status',      # RFC 6066 10.2
+   23 => 'supplemental_data',       # RFC ??
+   24 => 'key_update',              # RFC 8446
+  254 => 'message_hash',            # RFC 8446
   255 => '255',
    -1 => '<<undefined>>',           # added for internal use
   -99 => '<<fragmented_message>>',  # added for internal use
@@ -453,50 +467,1082 @@ our %tls_error_alerts = ( # mainly RFC 6066
     #----+-------------------------------------+----+--+---------------
 ); # %tls_error_alerts
 
-our %tls_extensions = (         # RFC 6066, 8446, ...
-    #----+-----------------------------+----+---+------------------------------
-    # ID      name                      RFC DTLS other names
-    #----+-----------------------------+----+---+------------------------------
-    0 => [qw( server_name               4366  -   )],   # also 6066
-    1 => [qw( max_fragment_length       6066  -   )],
-    2 => [qw( client_certificate_url    ????  -   )],
-    3 => [qw( trusted_ca_keys           ????  -   )],
-    4 => [qw( truncated_hmac            ????  -   )],
-    5 => [qw( status_request            6066  -   )],
-    6 => [qw( user_mapping              ????  -   )],
-    7 => [qw( reserved_7                ????  -   )],
-    8 => [qw( reserved_8                ????  -   )],
-    9 => [qw( cert_type                 5081  -   )],   # also 6091
-   10 => [qw( supported_groups          8422  -   )],   # also 7919
-#   10 => [qw( ecliptic_curves           4492  -   )],  # TODO: old name (see above)?
-   11 => [qw( ec_point_formats          4492  -   )],
-   12 => [qw( srp                       5054  -   )],
-   13 => [qw( signature_algorithms      8446  -   )],
-   14 => [qw( use_srp                   5764  -   )],
-   15 => [qw( heartbeat                 6520  -   )],
-   16 => [qw( application_layer_protocol_negotiation 7301  -  )],
-   18 => [qw( signed_certificate_timestamp 6962 - )],
-   19 => [qw( client_certificate_type   7250  -   )],
-   20 => [qw( server_certificate_type   7250  -   )],
-   21 => [qw( padding                   7685  -   )],
-#  34 => [qw( unassigned                5246  -   )],
-   35 => [qw( SessionTicket             4507  -   )],
-   40 => [qw( RESERVERD_40              ????  -   )],
-   41 => [qw( pre_shared_key            8446  -   )],
-   42 => [qw( early_data                8446  -   )],
-   43 => [qw( supported_versions        8446  -   )],
-   44 => [qw( cookie                    8446  -   )],
-   45 => [qw( psk_key_exchange_modes    8446  -   )],
-   46 => [qw( RESERVERD_46              ????  -   )],
-#  ...
-   47 => [qw( certificate_authorities   8446  -   )],
-   48 => [qw( oid_filters               8446  -   )],
-   49 => [qw( post_handshake_auth       8446  -   )],
-   50 => [qw( signature_algorithms_cert 8446  -   )],
-   51 => [qw( key_share                 8446  -   )],
-62208 => [qw( TACK                      ????  -   )],
-65535 => [qw( 65535                     ????  -   )],
-); # %tls_extensions
+our %TLS_EC_POINT_FORMATS = (
+   TEXT =>      "ec point format(s)",                            # define text for print
+ FORMAT => [qw( "%s"                                          )],# define format for printf
+    #----+-------------------------------------+----+---+----------------------------
+    # ID        name                            DTLS RECOMMENDED  RFC
+    #----+-------------------------------------+----+---+----------------------------
+      0 => [qw( uncompressed                    Y    Y   4492 )],
+      1 => [qw( ansiX962_compressed_prime       Y?   N?  4492 )],
+      2 => [qw( ansiX962_compressed_char2       Y?   N?  4492 )],
+    #----+-------------------------------------+----+---+----------------------------
+);
+
+# https://tools.ietf.org/html/rfc6066#section-3 
+
+our %TLS_NAME_TYPE = (
+   TEXT =>      "server name type",                             # define text for print
+ FORMAT => [qw( %s                                           )],# define format for printf
+    #----+-------------------------------------+----+-------+------------------------
+    # ID        name                            DTLS RFC
+    #----+-------------------------------------+----+-------+------------------------
+   0x00 => [qw( host_name                       Y    6066    )],
+    #----+-------------------------------------+----+-------+------------------------
+);
+
+# https://tools.ietf.org/html/rfc6066#section-4
+# Default is 2^14 if this extension is not present
+our %TLS_MAX_FRAGMENT_LENGTH = (
+   TEXT =>      "max fragment length negotiation",              # define text for print
+ FORMAT => [    "%s",   "(%s bytes)"                          ],# define format for printf
+    #----+-------------------------------------+----+-------+------------------------
+    # ID        name                    RECONMMENDED RFC
+    #----+-------------------------------------+----+-------+------------------------
+   0x01 => [qw( 2^9        512                  -    6066    )],
+   0x02 => [qw( 2^10      1024                  -    6066    )],
+   0x03 => [qw( 2^11      2048                  -    6066    )],
+   0x04 => [qw( 2^12      4096                  -    6066    )],
+    #----+-------------------------------------+----+-------+------------------------
+);
+
+# https://tools.ietf.org/html/rfc8446#appendix-B.3.1.1 (added versions manually)
+our %TLS_PROTOCOL_VERSION  = (
+   TEXT =>      "supported protocol version(s)",                # define text for print
+ FORMAT => [qw( %s    ) ],                                      # define format for printf
+    #----+-------------------------------------------------------------------------
+    # ID        name
+    #----+-------------------------------------------------------------------------
+ 0x0304 => [qq( TLS 1.3 )],
+ 0x0303 => [qq( TLS 1.2 )],
+ 0x0302 => [qq( TLS 1.1 )],
+ 0x0301 => [qq( TLS 1.0 )],
+ 0x0300 => [qq( SSL 3   )],
+    #----+-------------------------------------------------------------------------
+);
+
+# https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-pskkeyexchangemode
+our %TLS_PSK_KEY_EXCHANGE_MODE  = (
+   TEXT =>      "PSK key exchange mode(s)",                     # define text for print
+ FORMAT => [qw( "%s"                                         )],# define format for printf
+    #----+-------------------------------------+----+-------+------------------------
+    # ID        name                    RECONMMENDED RFC
+    #----+-------------------------------------+----+-------+------------------------
+   0x00 => [qw( psk_ke                          Y    8446    )],
+   0x01 => [qw( psk_dhe_ke                      Y    8446    )],
+    #----+-------------------------------------+----+-------+------------------------
+);
+
+# https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-signaturescheme
+our %TLS_SIGNATURE_SCHEME = (
+   TEXT =>      "signature scheme(s)",                          # define text for print
+ FORMAT => [qw( %s                                           )],# define format for printf
+    #----+-------------------------------------+----+-------+------------------------
+    # ID        name                            DTLS  RFC       # comment
+    #----+-------------------------------------+----+-------+------------------------
+ 0x0201 => [qw( rsa_pkcs1_sha1                   Y   8446    )],
+ 0x0202 => [qw( dsa_sha1                         ?   8446    )],# Quelle suchen & prüfen!
+ 0x0203 => [qw( ecdsa_sha1                       Y   8446    )],
+
+ 0x0301 => [qw( rsa_sha224                       ?   ?       )],# Quelle suchen & prüfen!
+ 0x0302 => [qw( dsa_sha224                       ?   ?       )],# Quelle suchen & prüfen!
+ 0x0303 => [qw( ecdsa_sha224                     ?   ?       )],# Quelle suchen & prüfen!
+
+ 0x0401 => [qw( rsa_pkcs1_sha256                 Y   8446    )],
+ 0x0402 => [qw( dsa_sha256                       ?   8446    )],# Quelle suchen & prüfen!
+ 0x0403 => [qw( ecdsa_secp256r1_sha256           Y   8446    )],
+ 0x0420 => [qw( rsa_pkcs1_sha256_legacy          N   draft-davidben-tls13-pkcs1-00 )],
+
+ 0x0501 => [qw( rsa_pkcs1_sha384                 Y   8446    )],
+ 0x0502 => [qw( dsa_sha384                       ?   8446]   )],# Quelle suchen & prüfen!
+ 0x0503 => [qw( ecdsa_secp384r1_sha384           Y   8446    )],
+
+ 0x0520 => [qw( rsa_pkcs1_sha384_legacy          N   draft-davidben-tls13-pkcs1-00 )],
+
+ 0x0601 => [qw( rsa_pkcs1_sha512                 Y   8446    )],
+ 0x0602 => [qw( dsa_pkcs1_sha512                 Y   8446    )],# Quelle suchen & prüfen!
+ 0x0603 => [qw( ecdsa_secp521r1_sha512           Y   8446    )],
+
+ 0x0620 => [qw( rsa_pkcs1_sha512_legacy          N   draft-davidben-tls13-pkcs1-00 )],
+
+ 0x0704 => [qw( eccsi_sha256                     N   draft-wang-tls-raw-public-key-with-ibc )],
+ 0x0705 => [qw( iso_ibs1                         N   draft-wang-tls-raw-public-key-with-ibc])],
+ 0x0706 => [qw( iso_ibs2                         N   draft-wang-tls-raw-public-key-with-ibc])],
+ 0x0707 => [qw( iso_chinese_ibs                  N   draft-wang-tls-raw-public-key-with-ibc])],
+ 0x0708 => [qw( sm2sig_sm3                       N   draft-yang-tls-tls13-sm-suites )],
+ 0x0709 => [qw( gostr34102012_256a               N   draft-smyshlyaev-tls13-gost-suites )],
+ 0x070A => [qw( gostr34102012_256b               N   draft-smyshlyaev-tls13-gost-suites )],
+ 0x070B => [qw( gostr34102012_256c               N   draft-smyshlyaev-tls13-gost-suites )],
+ 0x070C => [qw( gostr34102012_256d               N   draft-smyshlyaev-tls13-gost-suites )],
+ 0x070D => [qw( gostr34102012_512a               N   draft-smyshlyaev-tls13-gost-suites )],
+ 0x070E => [qw( gostr34102012_512b               N   draft-smyshlyaev-tls13-gost-suites )],
+ 0x070F => [qw( gostr34102012_512c               N   draft-smyshlyaev-tls13-gost-suites )],
+
+ 0x0804 => [qw( rsa_pss_rsae_sha256              Y   8446    )],
+ 0x0805 => [qw( rsa_pss_rsae_sha384              Y   8446    )],
+ 0x0806 => [qw( rsa_pss_rsae_sha512              Y   8446    )],
+ 0x0807 => [qw( ed25519                          Y   8446    )],
+ 0x0808 => [qw( ed448                            Y   8446    )],
+ 0x0809 => [qw( rsa_pss_pss_sha256               Y   8446    )],
+ 0x080A => [qw( rsa_pss_pss_sha384               Y   8446    )],
+ 0x080B => [qw( rsa_pss_pss_sha512               Y   8446    )],
+
+ 0x081A => [qw( ecdsa_brainpoolP256r1tls13_sha256 N  8734    )],
+ 0x081B => [qw( ecdsa_brainpoolP384r1tls13_sha384 N  8734    )],
+ 0x081C => [qw( ecdsa_brainpoolP512r1tls13_sha512 N  8734    )],
+    #----+-------------------------------------+----+-------+------------------------
+);
+
+# Torsten: ex %ECC_NAMED_CURVE =
+# http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-10
+our %TLS_SUPPORTED_GROUPS = (
+   TEXT =>      "supported group(s)",                               # define text for print
+ FORMAT => [    "%s",           "(%s bits)"                       ],# define format for printf, space is needed -> no 'qw'
+    #----+-----------------------------+-------+----+---+----------------------------
+    # ID        name               (added:)bits DTLS RECOMMENDED  RFC
+    #----+-----------------------------+-------+----+---+----------------------------
+      0 => [qw( Reverved_0                 0    N    N   8447    )],
+      1 => [qw( sect163k1                163    Y    N   4492    )],
+      2 => [qw( sect163r1                163    Y    N   4492    )],
+      3 => [qw( sect163r2                163    Y    N   4492    )],
+      4 => [qw( sect193r1                193    Y    N   4492    )],
+      5 => [qw( sect193r2                193    Y    N   4492    )],
+      6 => [qw( sect233k1                233    Y    N   4492    )],
+      7 => [qw( sect233r1                233    Y    N   4492    )],
+      8 => [qw( sect239k1                239    Y    N   4492    )],
+      9 => [qw( sect283k1                283    Y    N   4492    )],
+     10 => [qw( sect283r1                283    Y    N   4492    )],
+     11 => [qw( sect409k1                409    Y    N   4492    )],
+     12 => [qw( sect409r1                409    Y    N   4492    )],
+     13 => [qw( sect571k1                571    Y    N   4492    )],
+     14 => [qw( sect571r1                571    Y    N   4492    )],
+     15 => [qw( secp160k1                160    Y    N   4492    )],
+     16 => [qw( secp160r1                160    Y    N   4492    )],
+     17 => [qw( secp160r2                160    Y    N   4492    )],
+     18 => [qw( secp192k1                192    Y    N   4492    )],
+     19 => [qw( secp192r1                192    Y    N   4492    )],
+     20 => [qw( secp224k1                224    Y    N   4492    )],
+     21 => [qw( secp224r1                224    Y    N   4492    )],
+     22 => [qw( secp256k1                256    Y    N   4492    )],
+     23 => [qw( secp256r1                256    Y    Y   4492    )],
+     24 => [qw( secp384r1                384    Y    Y   4492    )],
+     25 => [qw( secp521r1                521    Y    N   4492    )],
+     26 => [qw( brainpoolP256r1          256    Y    Y   7027    )],
+     27 => [qw( brainpoolP384r1          384    Y    Y   7027    )],
+     28 => [qw( brainpoolP512r1          512    Y    Y   7027    )],
+     29 => [qw( x25519                   255    Y    Y   8446:8422 )],
+     30 => [qw( x448                     448    Y    Y   8446:8422 )],
+     31 => [qw( brainpoolP256r1tls13     256    Y    N   8734    )],
+     32 => [qw( brainpoolP384r1tls13     384    Y    N   8734    )],
+     33 => [qw( brainpoolP512r1tls13     512    Y    N   8734    )],
+     34 => [qw( GC256A                   256    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     35 => [qw( GC256B                   256    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     36 => [qw( GC256C                   256    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     37 => [qw( GC256D                   256    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     38 => [qw( GC512A                   512    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     39 => [qw( GC512B                   512    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     40 => [qw( GC512C                   512    Y    N   draft-smyshlyaev-tls12-gost-suites )],
+     41 => [qw( curveSM2                 256    N    N   draft-yang-tls-tls13-sm-suites )],
+#    42-255  Unassigned
+    256 => [qw( ffdhe2048               2048    Y    N   7919    )],
+    257 => [qw( ffdhe3072               3072    Y    N   7919    )],
+    258 => [qw( ffdhe4096               4096    Y    N   7919    )],
+    259 => [qw( ffdhe6144               6144    Y    N   7919    )],
+    260 => [qw( ffdhe8192               8192    Y    N   7919    )],
+#   261-507 Unassigned
+    508 => [qw( ffdhe_private_use_508     NN    Y    N   7919    )],
+    509 => [qw( ffdhe_private_use_509     NN    Y    N   7919    )],
+    510 => [qw( ffdhe_private_use_510     NN    Y    N   7919    )],
+    511 => [qw( ffdhe_private_use_511     NN    Y    N   7919    )],
+#   512-2569    Unassigned
+   2570 => [qw( Reserved_2570             NN    Y    N   8701    )],
+#  2571-6681    Unassigned
+   6682 => [qw( Reserved_6682             NN    Y    N   8701    )],
+# 6683-10793   Unassigned
+  10794 => [qw( Reserved_10794            NN    Y    N   8701    )],
+# 10795-14905   Unassigned
+  14906 => [qw( Reserved_14906            NN    Y    N   8701    )],
+# 14907-19017   Unassigned
+  19018 => [qw( Reserved_19018            NN    Y    N   8701    )],
+# 19019-23129   Unassigned
+  23130 => [qw( Reserved_23130            NN    Y    N   8701    )],
+# 23131-27241   Unassigned
+  27242 => [qw( Reserved_27242            NN    Y    N   8701    )],
+# 27243-31353   Unassigned
+  31354 => [qw( Reserved_31354            NN    Y    N   8701    )],
+# 31355-35465   Unassigned
+  35466 => [qw( Reserved_35466            NN    Y    N   8701    )],
+# 35467-39577   Unassigned
+  39578 => [qw( Reserved_39578            NN    Y    N   8701    )],
+# 39579-43689   Unassigned
+  43690 => [qw( Reserved_43690            NN    Y    N   8701    )],
+# 43691-47801   Unassigned
+  47802 => [qw( Reserved_47802            NN    Y    N   8701    )],
+# 47803-51913   Unassigned
+  51914 => [qw( Reserved_51914            NN    Y    N   8701    )],
+# 51915-56025   Unassigned
+  56026 => [qw( Reserved_56026            NN    Y    N   8701    )],
+# 56027-60137   Unassigned
+  60138 => [qw( Reserved_60138            NN    Y    N   8701    )],
+# 60139-64249   Unassigned
+  64250 => [qw( Reserved_64250            NN    Y    N   8701    )],
+# 64251-65023   Unassigned
+# 65024-65279   Reserved_for_Private_Use  NN    Y    N   8422    ,
+ 0xFE00 => [qw( ecdhe_private_use_65024   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE01 => [qw( ecdhe_private_use_65025   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE02 => [qw( ecdhe_private_use_65026   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE03 => [qw( ecdhe_private_use_65027   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE04 => [qw( ecdhe_private_use_65028   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE05 => [qw( ecdhe_private_use_65029   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE06 => [qw( ecdhe_private_use_65030   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+ 0xFE07 => [qw( ecdhe_private_use_65031   NN    Y    N   NN      )],# 0xFE00..0xFEFF => "ecdhe_private_use",
+# 65280         Unassigned
+  65281 => [qw( arbitrary_explicit_prime_curves  -variable- N   8422    )],
+  65282 => [qw( arbitrary_explicit_char2_curves  -variable- Y   8422    )],
+# 65283-65535   Unassigned
+);
+
+our %TLS_EXTENSIONS = (
+# Generated on base of IANA (https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xml#tls-extensiontype-values-1), RFCs and drafts for RFCs
+#
+# Added a self defined general description for the structure of for PDUs, e.g. tls extensions:
+# len1:     Len of the next bytes, coded in 1 byte      (-> max 0xFF)
+# len2:     Len of the next bytes, coded in 2 bytes     (-> max 0xFFFF)
+# len3:     Len of the next bytes, coded in 3 bytes     (-> max 0xFFFFFF)
+# size1:    Size of the next value, coded in 1 byte     (-> max 0xFF)
+# size2:    Size of the next value, coded in 2 bytes    (-> max 0xFFFF)
+# val1:     value, coded in 1 byte                      (-> max 0xFF)
+# val2:     value, coded in 2 bytes                     (-> max 0xFFFF)
+# val4:     value, coded in 4 byters                    (-> max 0xFFFFFFFF)
+# val1List: List of value, coded in 1 byte              (-> max 0xFF, 0xFF, ...)
+# val2List: List of value, coded in 2 bytes             (-> max 0xFFFF, 0xFFFF, ...)
+# raw:      Raw bytes (number needs to be previously defined by a len or size element)
+# sequence: Sequence of structured elements that form lists of compound values
+#
+# Hash values:
+# <Hash>:       Extension name by IANA, RFC or draft for a RFCr
+# ID:           Official nr by IANA, RFC or DRAFT for a RFC
+# CH:           Client Hello: describes the structure of client hellos based on the general descrition language defined above
+# CH_TEXT:      Descriptions and references to decoding hashes by the structure element of a CH
+# RX:           Received Extension, e.g. Server Hellon: describes the structure of received hellos based on the general descrition language defined above
+# RX_TEXT:      Descriptions and references to decoding hashes by the structure element of a RX
+# RECOMMENDED:  From IANA, 'N' or '?' if the extension is taken from a RFC or draft for a RFC
+# TLS13:        Whrere used by TLSv1.3 according IANA
+# RFC:          RFC according, IANA, RFC or draft
+# DEFAULT:      Default values for client hellos (used by val1 ... val4, val1List, val2List, raw, sequences define an array inside the array lists).
+# CHECK:        Internal value, if the VALUE or CHECKing for a list of all (supporeted) values (might be reserved for future deployment)
+# COMMENT:      Optional comments
+#
+#---------------------------------+---------------+------------+----------------------------------+--------------------------------+--------+---------------+--------------------------
+#Extension Name: (ID (Value), CH* (Client Hello)*, RX* (Receive SH, ...), RECOMMENDED, TLS13 (TLS 1.3), RFC, COMMENT*; *= Added             comment
+#---------------------------------+---------------+------------+----------------------------------+--------------------------------+--------+---------------+--------------------------
+server_name => {
+            ID      => 0,                                           # Hex:     0x0000
+            CH         => [qw(len2 len2 sequence val1 len2 raw)],
+            CH_TEXT    => ["length", "server name list length", "server name element", \%TLS_NAME_TYPE, "server name length", "server name" ],
+            RX            => [qw(len2 raw)],                        # Example: 0x0000 (no data, only as marker)
+            RX_TEXT       => ["length", "server name list length" ],
+            RECOMMENDED      => q(Y),
+            TLS13               => [qw(CH EE)],
+            RFC                    => [qw(6066)],
+            DEFAULT                   => [
+                                             [                      # 1st sequence element
+                                                 0x00,              # host_name
+                                                 "localhost",       # $TLS_EXTENSION{server_name}{DEFAULT}[0][0][1], might be overwritten
+                                             ],
+                                         ],
+            CHECK                        => q(VALUE),
+            COMMENT                         => q(),
+    },
+
+max_fragment_length => {
+            ID    => 1,
+            CH       => [qw(len2 len2 val1List)],
+            CH_TEXT  => ["length", "length of max fragment lenght", \%TLS_MAX_FRAGMENT_LENGTH ],
+            RX          => [qw(len2 raw)],
+            RX_TEXT  => ["length", \%TLS_MAX_FRAGMENT_LENGTH ],
+            RECOMMENDED    => q(-),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(6066 8449)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(replaced by extension 'record_size_limit'; Default max length is 2^14 if this extension is not negotiated),
+    },
+
+client_certificate_url => {
+            ID    => 2,
+            CH       => [qw(len2 len2 val1 sequence len2 val1 raw)],#TBD Check sequence position
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(6066)],
+            DEFAULT                 => [ ],                         # [ [<seqence>], ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(val20 oder len2_val?),
+    },
+
+trusted_ca_keys => {
+            ID    => 3,
+            CH       => [qw(len2 len2 val1 len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(N)],
+            RFC                  => [qw(6066)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(?),
+    },
+truncated_hmac => {
+            ID    => 4,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q[N],
+            TLS13             => [qw(N)],
+            RFC                  => [qw(6066 IESG_Action_2018-08-16)],
+            DEFAULT                 => [],
+            CHECK                      => q[VALUE],
+            COMMENT                       => q[Shall be empty],
+    },
+status_request => {
+            ID    => 5,
+            CH       => [qw(len2 val1 len2 raw len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH CR CT)],
+            RFC                  => [qw(6066)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[SH ext_form_val1_len2_val?],
+    },
+user_mapping => {
+            ID    => 6,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(4681)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(),
+    },
+client_authz => {
+            ID    => 7,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(5878)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(),
+    },
+server_authz => {
+            ID    => 8,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(5878)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(),
+    },
+cert_type => {
+            ID    => 9,
+            CH       => [qw(len2 len1 val1List)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(6091)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(Server: val1),
+    },
+#elliptic_curves  =>                                                             # old name
+supported_groups => {
+            ID    => 10,
+            CH       => [qw(len2 len2 val2List)],
+            CH_TEXT  => ["length", "supported groups list length", \%TLS_SUPPORTED_GROUPS],
+            RX          => [qw(len2 val2)],
+            RX_TEXT     => ["length", \%TLS_SUPPORTED_GROUPS],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(8422 7919)],
+            DEFAULT                 => [
+                                         [ #0x0000, # 0x0000 (Unassigned_0)       ## disabled by default
+                                            0x0001, # sect163k1
+                                            0x0002, # sect163r1
+                                            0x0003, # sect163r2
+                                            0x0004, # sect193r1
+                                            0x0005, # sect193r2
+                                            0x0006, # sect233k1
+                                            0x0007, # sect233r1
+                                            0x0008, # sect239k1
+                                            0x0009, # sect283k1
+                                            0x000a, # sect283r1
+                                            0x000b, # sect409k1
+                                            0x000c, # sect409r1
+                                            0x000d, # sect571k1
+                                            0x000e, # sect571r1
+                                            0x000f, # secp160k1
+                                            0x0010, # secp160r1
+                                            0x0011, # secp160r2
+                                            0x0012, # secp192k1
+                                            0x0013, # secp192r1
+                                            0x0014, # secp224k1
+                                            0x0015, # secp224r1
+                                            0x0016, # secp256k1
+                                            0x0017, # secp256r1     ## => common default curve
+                                            0x0018, # secp384r1
+                                            0x0019, # secp512r1
+                                            0x001a, # brainpoolP256r1
+                                            0x001b, # brainpoolP384r1
+                                            0x001c, # brainpoolP512r1
+                                            0x001d, # ecdh_x25519
+                                            0x001e, # ecdh_x448
+                                            0x001f, # brainpoolP256r1tls13
+                                            0x0020, # brainpoolP384r1tls13
+                                            0x0021, # brainpoolP512r1tls13
+                                            0x0022, # GC256A        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0023, # GC256B        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0024, # GC256C        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0025, # GC256D        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0026, # GC512A        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0027, # GC512B        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0028, # GC512C        [draft-smyshlyaev-tls12-gost-suites]
+                                            0x0029, # curveSM2      [draft-yang-tls-tls13-sm-suites]
+                                                    # Finite Field Groups (DHE):
+                                            0x0100, # ffdhe2048
+                                            0x0101, # ffdhe3072
+                                            0x0102, # ffdhe4096
+                                            0x0103, # ffdhe6144
+                                            0x0104, # ffdhe8192
+                                         ],
+                                       ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(renamed from "elliptic_curves"),
+    },
+ec_point_formats => {
+            ID    => 11,                            # Hex:      0x000b
+            CH       => [qw(len2 len1 val1List)],   # Example:  0x0002 0x01 0x00
+            CH_TEXT  => ["length", "ec point formats list length", \%TLS_EC_POINT_FORMATS],
+            RX          => [qw(len2 len1 val1List)],
+            RX_TEXT     => ["length", "ec point formats list length", \%TLS_EC_POINT_FORMATS],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(8422)],
+            DEFAULT                 => [ 
+                                         [ 0x00,    # uncompressed,Y,[RFC8422]
+                                           0x01,    # ansiX962_compressed_prime,Y,[RFC8422]
+                                           0x02,    # ansiX962_compressed_char2,Y,[RFC8422]
+                                         ],
+                                       ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(),
+    },
+srp => {
+            ID    => 12,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),,
+            TLS13             => [qw(-)],
+            RFC                  => [qw(5054)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(),
+    },
+signature_algorithms => {
+            ID    => 13,                            # Hex: 0x000d
+            CH       => [qw(len2 len2 val2List)],     # Example: 0x0020 0x001E 0x0601 0x0602 0x0603 0x0501 0x0502 0x0503 0x0401 0x0402 0x0403 0x0301 0x0302 0x0303 0x0201 0x0202 0x0203
+            CH_TEXT  => ["length", "signature hash algorithms list length", \%TLS_SIGNATURE_SCHEME],
+            RX          => [qw(len2 val2)],
+            RX_TEXT     => ["length", \%TLS_SIGNATURE_SCHEME],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH CR)],
+            RFC                  => [qw(8446)],
+            DEFAULT                 => [
+                                         [ 0x0201, # rsa_pkcs1_sha1,Y,[RFC8446]
+                                           0x0202, # SHA1 DSA,[RFC8446] (Quelle suchen & prüfen!)
+                                           0x0203, # ecdsa_sha1,Y,[RFC8446]
+
+                                           0x0301, # SHA224 RSA (Quelle suchen & prüfen!)
+                                           0x0302, # SHA224 DSA (Quelle suchen & prüfen!)
+                                           0x0303, # SHA224 ECDSA (Quelle suchen & prüfen!)
+
+                                           0x0401, # rsa_pkcs1_sha256,Y,[RFC8446]
+                                           0x0402, # SHA256 DSA (Quelle suchen & prüfen!),[RFC8446] (Quelle suchen & prüfen!)
+                                           0x0403, # ecdsa_secp256r1_sha256,Y,[RFC8446]
+                                           0x0420, # rsa_pkcs1_sha256_legacy,N,[draft-davidben-tls13-pkcs1-00]
+
+                                           0x0501, # rsa_pkcs1_sha384,Y,[RFC8446]
+                                           0x0502, # Reserved for backward compatibility,,[RFC8446]
+                                           0x0503, # ecdsa_secp384r1_sha384,Y,[RFC8446]
+
+                                           0x0520, # rsa_pkcs1_sha384_legacy,N,[draft-davidben-tls13-pkcs1-00]
+
+                                           0x0601, # rsa_pkcs1_sha512,Y,[RFC8446]
+                                           0x0602, # dsa_pkcs1_sha512,Y,[RFC8446]? (Quelle suchen und prüfen!)
+                                           0x0603, # ecdsa_secp521r1_sha512,Y,[RFC8446]
+
+                                           0x0620, # rsa_pkcs1_sha512_legacy,N,[draft-davidben-tls13-pkcs1-00]
+
+                                           0x0704, # eccsi_sha256,N,[draft-wang-tls-raw-public-key-with-ibc]
+                                           0x0705, # iso_ibs1,N,[draft-wang-tls-raw-public-key-with-ibc]
+                                           0x0706, # iso_ibs2,N,[draft-wang-tls-raw-public-key-with-ibc]
+                                           0x0707, # iso_chinese_ibs,N,[draft-wang-tls-raw-public-key-with-ibc]
+                                           0x0708, # sm2sig_sm3,N,[draft-yang-tls-tls13-sm-suites]
+                                           0x0709, # gostr34102012_256a,N,[draft-smyshlyaev-tls13-gost-suites]
+                                           0x070A, # gostr34102012_256b,N,[draft-smyshlyaev-tls13-gost-suites]
+                                           0x070B, # gostr34102012_256c,N,[draft-smyshlyaev-tls13-gost-suites]
+                                           0x070C, # gostr34102012_256d,N,[draft-smyshlyaev-tls13-gost-suites]
+                                           0x070D, # gostr34102012_512a,N,[draft-smyshlyaev-tls13-gost-suites]
+                                           0x070E, # gostr34102012_512b,N,[draft-smyshlyaev-tls13-gost-suites]
+                                           0x070F, # gostr34102012_512c,N,[draft-smyshlyaev-tls13-gost-suites]
+
+                                           0x0804, # rsa_pss_rsae_sha256,Y,[RFC8446]
+                                           0x0805, # rsa_pss_rsae_sha384,Y,[RFC8446]
+                                           0x0806, # rsa_pss_rsae_sha512,Y,[RFC8446]
+                                           0x0807, # ed25519,Y,[RFC8446]
+                                           0x0808, # ed448,Y,[RFC8446]
+                                           0x0809, # rsa_pss_pss_sha256,Y,[RFC8446]
+                                           0x080A, # rsa_pss_pss_sha384,Y,[RFC8446]
+                                           0x080B, # rsa_pss_pss_sha512,Y,[RFC8446]
+
+                                           0x081A, # ecdsa_brainpoolP256r1tls13_sha256,N,[RFC8734]
+                                           0x081B, # ecdsa_brainpoolP384r1tls13_sha384,N,[RFC8734]
+                                           0x081C, # ecdsa_brainpoolP512r1tls13_sha512,N,[RFC8734]
+                                         ],
+                                       ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+use_srtp => {
+            ID    => 14,
+            CH       => [qw(len2 size2 val2List len1 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(5764)],
+            DEFAULT                 => [
+                                         [ 0x0001, # SRTPProtectionProfile SRTP_AES128_CM_HMAC_SHA1_80
+                                           0x0002, # SRTPProtectionProfile SRTP_AES128_CM_HMAC_SHA1_32
+                                           0x0005, # SRTPProtectionProfile SRTP_NULL_HMAC_SHA1_80
+                                           0x0006, # SRTPProtectionProfile SRTP_NULL_HMAC_SHA1_32
+                                         ]
+                                       ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+heartbeat => {
+            ID    => 15,
+            CH       => [qw(len2 val1)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(6520)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(Syntax prüfen!),
+    },
+application_layer_protocol_negotiation => {
+            ID    => 16,
+            CH       => [qw(len2 len2 size1 raw size1 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(7301)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+status_request_v2 => {
+            ID    => 17,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(6961)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+signed_certificate_timestamp => {
+            ID    => 18,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(CH CR CT)],
+            RFC                  => [qw(6962)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+client_certificate_type => {
+            ID    => 19,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(7250)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+server_certificate_type => {
+            ID    => 20,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(7250)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+padding => {
+            ID    => 21,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH)],
+            RFC                  => [qw(7685)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(val= 0x00-Bytes),
+    },
+encrypt_then_mac => {
+            ID    => 22,                            # Hex:        0x0016
+            CH       => [qw(len2 raw)],               # Example:    0x0000 (no data, only as marker)
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(7366)],
+            DEFAULT                 => [], #empty
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+extended_master_secret => {
+            ID    => 23,                            # Hex:      0x0017
+            CH       => [qw(len2 raw)],               # Example:  0x0000 (no data, only as marker)
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(7627)],
+            DEFAULT                 => [], #empty
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+token_binding => {
+            ID    => 24,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(8472)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+cached_info => {
+            ID    => 25,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(7924)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+tls_lts => {
+            ID    => 26,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(draft-gutmann-tls-lts)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+compress_certificate => {
+            ID    => 27,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH CR)],
+            RFC                  => [qw(draft-ietf-tls-certificate-compression)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(TEMPORARY registered 2018-05-23 extension registered 2019-04-22 expires 2020-05-23),
+    },
+record_size_limit => {
+            ID    => 28,
+            CH       => [qw(len2 val2)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE)],
+            RFC                  => [qw(8449)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+pwd_protect => {
+            ID    => 29,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(CH)],
+            RFC                  => [qw(8492)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+pwd_clear => {
+            ID    => 30,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(CH)],
+            RFC                  => [qw(8492)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+password_salt => {
+            ID    => 31,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(N),
+            TLS13             => [qw(CH SH HRR)],
+            RFC                  => [qw(8492)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+#  32-34    Unassigned
+session_ticket => {
+            ID    => 35,                            # Hex:      0x0023
+#            CH       => [qw(len2 val4 len2 raw)],     # Example:  0x0000 (no data)
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(-)],
+            RFC                  => [qw(5077 8447)],
+            DEFAULT                 => [], # empty
+            CHECK                      => q(VALUE),
+            COMMENT                       => q(renamed from "SessionTicket TLS"),
+    },
+
+#  36-40    Unassigned
+# NOT official:
+extended_random => {
+            ID    => 40,
+            CH        => [qw(len2 len2 raw)],
+            RX           => [qw(len2 raw)],
+            RECOMMENDED     => q(N!),
+            TLS13              => [qw(?)],
+            RFC                   => [qw(draft-rescorla-tls-extended-random-02)],
+            DEFAULT                  => [],
+            CHECK                       => q(VALUE),
+            COMMENT                        => q(NSA; March 02, 2009; DO NOT USE!! https://gist.github.com/bonsaiviking/9921180: 0x0028, RSA BSAFE library),
+    },
+pre_shared_key => {
+            ID    => 41,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH SH)],
+            RFC                  => [qw(8446)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+early_data    => {
+            ID    => 42,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH EE NST)],
+            RFC                  => [qw(8446)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+supported_versions    => {
+            ID    => 43,                            # Hex:      0x002b
+            CH       => [qw(len2 len1 val2List)],     # Example:  0x0003 0x02 0x0304
+            CH_TEXT  => ["length", "supported versions list length", \%TLS_PROTOCOL_VERSION],
+            RX          => [qw(len2 val2)],
+            RX_TEXT     => ["length", \%TLS_PROTOCOL_VERSION],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH SH HRR)],
+            RFC                  => [qw(8446)],
+            DEFAULT                 => [
+                                         [ 0x0304, # TLS 1.3
+                                           # 0x0303, # TLS 1.2
+                                           # 0x0302, # TLS 1.1
+                                           # 0x0301, # TLS 1.0
+                                           # 0x0300, # SSL 3
+                                         ],
+                                       ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+cookie    => {
+            ID    => 44,
+            CH       => [qw(len2 raw)],
+            RX          => [qw(len2 raw)],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH HRR)],
+            RFC                  => [qw(8446)],
+            DEFAULT                 => [],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+psk_key_exchange_modes    => {                      # MUST be included if key_share is used
+            ID    => 45,                            # Hex:      0x02d
+            CH       => [qw(len2 len1 val1List)],   # Example:  0x0002 0x01 0x01
+            CH_TEXT     => ["length", "PSK key exchange modes list length", %TLS_PSK_KEY_EXCHANGE_MODE],
+            RX          => [qw(len2 val1)],
+            RX_TEXT     => ["length", %TLS_PSK_KEY_EXCHANGE_MODE],
+            RECOMMENDED    => q(Y),
+            TLS13             => [qw(CH)],
+            RFC                  => [qw(8446)],
+            DEFAULT                 => [ 
+                                         [ 0x00,    # psk_ke,Y,[RFC8446]
+                                           0x01,    # psk_dhe_ke,Y,[RFC8446]
+                                         ],
+                                       ],
+            CHECK                      => q(VALUE),
+            COMMENT                       => q[],
+    },
+#  46    Unassigned
+certificate_authorities    => {
+            ID    => 47,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(CH CR)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+oid_filters    => {
+            ID    => 48,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(CR)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+post_handshake_auth    => {
+            ID    => 49,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(CH)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+signature_algorithms_cert => {
+            ID    => 50,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(CH CR)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+key_share        => {                                               # MUST be the last extension if used
+            ID    => 51,                                            # Hex: 0x0033
+            CH        => [qw(len2 len2 sequence val2 size2 raw)],   # Example:  0x0026 0x0024 0x001d 0x0020 <raw32>
+            CH_TEXT   => ["length", "client key share list length", "key share element", \%TLS_SUPPORTED_GROUPS, "key exchange length", "key exchange"],
+            RX            => [qw(len2 val2 size2 raw)],
+            RX_TEXT       => ["length", \%TLS_SUPPORTED_GROUPS, "key exchange length", "key exchange"],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(CH SH HRR)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [ 
+                                                [                   # 1st sequence element
+                                                  0x001d,           # Group x25519
+                                                  "\x01\x02\x03\x04\x05\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\x10\x11\x12\x13\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x20", # Key Exchange
+                                                ],
+                                                [                   # second sequence element
+                                                  0x0017,           # Group secp256r1
+                                                  "\x21\x22\x23\x24\x25\x27\x28\x29\x2A\x2B\x2C\x2D\x2E\x2F\x30\x31\x32\x33\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F\x40"
+                                                  . "\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4A\x4B\x4C\x4D\x4E\x4F\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5A\x5B\x5C\x5D\x5E\x5F\x60\x61", # Key Exchange
+                                                ],
+                                              ],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+transparency_info => {
+            ID    => 52,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(CH CR CT)],
+            RFC                        => [qw(draft-ietf-trans-6962-bis)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+#  53-65279    Unassigned
+supports_npn    => {
+            ID    => 13172,                         # Hex:      0x3374
+#            CH        => [qw(len2 len1 raw len1 raw)],# Example:  0x0000 (no data)
+            CH        => [qw(len2 len1 raw)],# Example:  0x0000 (no data)
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(draft-agl-tls-nextprotoneg-04)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q[],
+    },
+# NOT official:
+channel_id_old    => {
+            ID    => 33031,
+            CH        => [qw(len2 val4 val4 val4 val4)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(N),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(draft-balfanz-tls-channelid-00)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(channel_id_old=0x754F),
+    },
+# NOT official:
+channel_id    => {
+            ID    => 33032,
+            CH        => [qw(len2 val4 val4 val4 val4)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(N),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(draft-balfanz-tls-channelid-01)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(channel_id=0x7550),
+    },
+# NOT official:
+opaque_prf_input    => {
+            ID    => 38183,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(N!),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(draft-rescorla-tls-opaque-prf-input-00)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(NSA; December 13, 2006; DO NOT USE!! https://www.openssl.org/news/changelog.html#x44 [29 Mar 2010]: opaque_prf_input=0x9527),
+    },
+tack    => {
+            ID    => 62208,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(draft-perrin-tls-tack-02)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(January 07, 2013, expired July 11, 2013),
+    },
+
+#
+private_65280    => {
+            ID    => 65280,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(for private use),
+    },
+renegotiation_info    => {
+            ID    => 65281,                             # Hex: 0xff01
+            CH        => [qw(len2 len1 raw)],             # Example: 0x0001 0x00
+            CH_TEXT   => ["length", "renegotiated connection data length", "client verify data"],
+            RX            => [qw(len2 len1 raw)],
+            RX_TEXT       => ["length", "renegotiated connection data length", "server verify data"],
+            RECOMMENDED        => q(Y),
+            TLS13                => [qw(-)],
+            RFC                        => [qw(5746)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(Default value is empty => len1=0x00 => len2=0x0001),
+    },
+
+#65282-65535 Reserved for Private Use
+private_65282   => {
+            ID    => 65282,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(for private use),
+    },
+private_65283    => {
+            ID    => 65283,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(for private use),
+    },
+private_65284    => {
+            ID    => 65284,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(for private use),
+    },
+private_65285    => {
+            ID    => 65285,
+            CH        => [qw(len2 raw)],
+            RX            => [qw(len2 raw)],
+            RECOMMENDED        => q(?),
+            TLS13                => [qw(?)],
+            RFC                        => [qw(8446)],
+            DEFAULT                        => [],
+            CHECK                            => q(VALUE),
+            COMMENT                                => q(for private use),
+    },
+); # %TLS_EXTENSIONS
+
+# Compile a reverse Hash to %TLS_EXTENSIONS by the IDs
+our %TLS_ID_TO_EXTENSIONS = (
+    #----+-------------------------------------------------------------------------
+    # ID        extension_name
+    #----+-------------------------------------------------------------------------
+
+ FORMAT => [    "Extension '%s':",                                   ],# define format for printf
+);
+
+foreach my $key (keys %TLS_EXTENSIONS) {                        # compile a reverse hash for extension IDs
+    $TLS_ID_TO_EXTENSIONS{$TLS_EXTENSIONS{$key}{ID}}[0] = $key; # store it in the fiorstv element of an array for compatibility reasons with hashes above, e.g. %TLS_SUPPORTED_GROUPS
+}
+
 
 my %tls_extensions__text = ( # TODO: this information needs to be added to %tls_extensions above
     'extension' => {            # TLS extensions
@@ -618,13 +1664,8 @@ our %ec_curve_types = ( # RFC 4492
     #----+-----------------------------+----+---+------------------------------
 ); # ec_curve_types
 
-# Torsten: %ECC_NAMED_CURVE =
-# http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-10
-# Value =>   Description bits(added) DTLS-OK Reference
-# our %named_curves =
+# EX: incl. OIDs:
 our %tls_curves = (
-# TODO: merge with %tls_signature_algorithms and %tls_supported_groups
-    # http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-8
     #----+-------------------------------------+----+--+-------+---+-------------------------
     # ID      name                              RFC DTLS NIST  bits OID
     #----+-------------------------------------+----+--+-------+---+------------------------
@@ -891,7 +1932,7 @@ our %ciphers_desc = (   # description of following %ciphers table
                             # weak unqualified by openssl or know vulnerable
                             # NOTE: weak includes NONE (no security at all)
                             #
-                            # all following informations as reported by openssl 0.9.8 .. 1.0.1h
+                            # all following information as reported by openssl 0.9.8 .. 1.0.1h
         'SSL/TLS',          # Protocol Version:
                             # SSLv2, SSLv3, TLSv1, TLSv11, TLSv12, TLSv13, DTLS0.9, DTLS1.0, PCT
                             # NOTE: all SSLv3 are also TLSv1, TLSv11, TLSv12
@@ -958,14 +1999,58 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x02FF0800' => [qw(DES-CFB-M1                      DES_64_CFB64_WITH_MD5_1)],
     '0x02FF0810' => [qw(NULL                            NULL)],
 #
+    '0x03000000' => [qw(NULL-NULL                       NULL_WITH_NULL_NULL)], # O-Saft dummy
+    '0x03000001' => [qw(NULL-MD5                        RSA_NULL_MD5)],
+    '0x03000002' => [qw(NULL-SHA                        RSA_NULL_SHA)],
+    '0x03000003' => [qw(EXP-RC4-MD5                     RSA_RC4_40_MD5)],
+    '0x03000004' => [qw(RC4-MD5                         RSA_RC4_128_MD5)],
+    '0x03000005' => [qw(RC4-SHA                         RSA_RC4_128_SHA)],
+    '0x03000006' => [qw(EXP-RC2-CBC-MD5                 RSA_RC2_40_MD5)],
+    '0x03000007' => [qw(IDEA-CBC-SHA                    RSA_IDEA_128_SHA)],
+    '0x03000008' => [qw(EXP-DES-CBC-SHA                 RSA_DES_40_CBC_SHA)],
+    '0x03000009' => [qw(DES-CBC-SHA                     RSA_DES_64_CBC_SHA)],
+    '0x0300000A' => [qw(DES-CBC3-SHA                    RSA_DES_192_CBC3_SHA)],
+    '0x0300000B' => [qw(EXP-DH-DSS-DES-CBC-SHA          DH_DSS_DES_40_CBC_SHA)],
+    '0x0300000C' => [qw(DH-DSS-DES-CBC-SHA              DH_DSS_DES_64_CBC_SHA)],
+    '0x0300000D' => [qw(DH-DSS-DES-CBC3-SHA             DH_DSS_DES_192_CBC3_SHA)],
+    '0x0300000E' => [qw(EXP-DH-RSA-DES-CBC-SHA          DH_RSA_DES_40_CBC_SHA)],
+    '0x0300000F' => [qw(DH-RSA-DES-CBC-SHA              DH_RSA_DES_64_CBC_SHA)],
+    '0x03000010' => [qw(DH-RSA-DES-CBC3-SHA             DH_RSA_DES_192_CBC3_SHA)],
+    '0x03000011' => [qw(EXP-EDH-DSS-DES-CBC-SHA         EDH_DSS_DES_40_CBC_SHA)],
+    '0x03000012' => [qw(EDH-DSS-DES-CBC-SHA             EDH_DSS_DES_64_CBC_SHA)],
+    '0x03000013' => [qw(EDH-DSS-DES-CBC3-SHA            EDH_DSS_DES_192_CBC3_SHA)],
+    '0x03000014' => [qw(EXP-EDH-RSA-DES-CBC-SHA         EDH_RSA_DES_40_CBC_SHA)],
+    '0x03000015' => [qw(EDH-RSA-DES-CBC-SHA             EDH_RSA_DES_64_CBC_SHA)],
+    '0x03000016' => [qw(EDH-RSA-DES-CBC3-SHA            EDH_RSA_DES_192_CBC3_SHA)],
+    '0x03000017' => [qw(EXP-ADH-RC4-MD5                 ADH_RC4_40_MD5)],
+    '0x03000018' => [qw(ADH-RC4-MD5                     ADH_RC4_128_MD5)],
     '0x03000019' => [qw(EXP-ADH-DES-CBC-SHA             ADH_DES_40_CBC_SHA)],
     '0x0300001A' => [qw(ADH-DES-CBC-SHA                 ADH_DES_64_CBC_SHA)],
     '0x0300001B' => [qw(ADH-DES-CBC3-SHA                ADH_DES_192_CBC_SHA)],
-    '0x03000017' => [qw(EXP-ADH-RC4-MD5                 ADH_RC4_40_MD5)],
-    '0x03000018' => [qw(ADH-RC4-MD5                     ADH_RC4_128_MD5)],
-    '0x030000A6' => [qw(ADH-AES128-GCM-SHA256           ADH_WITH_AES_128_GCM_SHA256)],
+    '0x0300001D' => [qw(FZA-FZA-SHA                     FZA_DMS_FZA_SHA)],     # FORTEZZA_KEA_WITH_FORTEZZA_CBC_SHA
+    '0x0300001C' => [qw(FZA-NULL-SHA                    FZA_DMS_NULL_SHA)],    # FORTEZZA_KEA_WITH_NULL_SHA
+    '0x0300001e' => [qw(FZA-RC4-SHA                     FZA_DMS_RC4_SHA)],     # <== 1e so that it is its own hash entry in crontrast to 1E (duplicate constant definition in openssl)
+    '0x0300001F' => [qw(KRB5-DES-CBC3-SHA               KRB5_DES_192_CBC3_SHA)],
+    '0x03000020' => [qw(KRB5-RC4-SHA                    KRB5_RC4_128_SHA)],
+    '0x03000021' => [qw(KRB5-IDEA-CBC-SHA               KRB5_IDEA_128_CBC_SHA)],
+    '0x03000022' => [qw(KRB5-DES-CBC-MD5                KRB5_DES_64_CBC_MD5)],
+    '0x03000023' => [qw(KRB5-DES-CBC3-MD5               KRB5_DES_192_CBC3_MD5)],
+    '0x03000024' => [qw(KRB5-RC4-MD5                    KRB5_RC4_128_MD5)],
+    '0x03000025' => [qw(KRB5-IDEA-CBC-MD5               KRB5_IDEA_128_CBC_MD5)],
+    '0x03000026' => [qw(EXP-KRB5-DES-CBC-SHA            KRB5_DES_40_CBC_SHA)],
+    '0x03000027' => [qw(EXP-KRB5-RC2-CBC-SHA            KRB5_RC2_40_CBC_SHA)],
+    '0x03000028' => [qw(EXP-KRB5-RC4-SHA                KRB5_RC4_40_SHA)],
+    '0x03000029' => [qw(EXP-KRB5-DES-CBC-MD5            KRB5_DES_40_CBC_MD5)],
+    '0x0300002A' => [qw(EXP-KRB5-RC2-CBC-MD5            KRB5_RC2_40_CBC_MD5)],
+    '0x0300002B' => [qw(EXP-KRB5-RC4-MD5                KRB5_RC4_40_MD5)],
+    '0x0300002F' => [qw(AES128-SHA                      RSA_WITH_AES_128_SHA)],
+    '0x03000035' => [qw(AES256-SHA                      RSA_WITH_AES_256_SHA)],
     '0x03000034' => [qw(ADH-AES128-SHA                  ADH_WITH_AES_128_SHA)],
+    '0x0300003B' => [qw(NULL-SHA256                     RSA_WITH_NULL_SHA256)],
+    '0x0300003C' => [qw(AES128-SHA256                   RSA_WITH_AES_128_SHA256)],
+    '0x0300003D' => [qw(AES256-SHA256                   RSA_WITH_AES_256_SHA256)],
     '0x0300006C' => [qw(ADH-AES128-SHA256               ADH_WITH_AES_128_SHA256)],
+    '0x030000A6' => [qw(ADH-AES128-GCM-SHA256           ADH_WITH_AES_128_GCM_SHA256)],
     '0x030000A7' => [qw(ADH-AES256-GCM-SHA384           ADH_WITH_AES_256_GCM_SHA384)],
     '0x030000A8' => [qw(PSK-AES128-GCM-SHA256           PSK_WITH_AES_128_GCM_SHA256)],
     '0x030000A9' => [qw(PSK-AES256-GCM-SHA384           PSK_WITH_AES_256_GCM_SHA384)],
@@ -975,7 +2060,6 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x03000089' => [qw(ADH-CAMELLIA256-SHA             ADH_WITH_CAMELLIA_256_CBC_SHA)],
     '0x030000BF' => [qw(ADH-CAMELLIA128-SHA256          ADH_WITH_CAMELLIA_128_CBC_SHA256)],
     '0x030000C5' => [qw(ADH-CAMELLIA256-SHA256          ADH_WITH_CAMELLIA_256_CBC_SHA256)],
-    '0x0300009B' => [qw(ADH-SEED-SHA                    ADH_WITH_SEED_SHA)],
     '0x03000063' => [qw(EXP1024-DHE-DSS-DES-CBC-SHA     DHE_DSS_EXPORT1024_WITH_DES_CBC_SHA)],
     '0x03000065' => [qw(EXP1024-DHE-DSS-RC4-SHA         DHE_DSS_EXPORT1024_WITH_RC4_56_SHA)],
     '0x030000A2' => [qw(DHE-DSS-AES128-GCM-SHA256       DHE_DSS_WITH_AES_128_GCM_SHA256)],
@@ -1005,25 +2089,16 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300CCAC' => [qw(ECDHE-PSK-CHACHA20-POLY1305-SHA256 ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256)],
     '0x0300CCAD' => [qw(DHE-PSK-CHACHA20-POLY1305-SHA256   DHE_PSK_WITH_CHACHA20_POLY1305_SHA256)],
     '0x0300CCAE' => [qw(RSA-PSK-CHACHA20-POLY1305-SHA256   RSA_PSK_WITH_CHACHA20_POLY1305_SHA256)],
-    '0x0300009A' => [qw(DHE-RSA-SEED-SHA                DHE_RSA_WITH_SEED_SHA)],
     '0x03000042' => [qw(DH-DSS-CAMELLIA128-SHA          DH_DSS_WITH_CAMELLIA_128_CBC_SHA)],
     '0x03000085' => [qw(DH-DSS-CAMELLIA256-SHA          DH_DSS_WITH_CAMELLIA_256_CBC_SHA)],
     '0x030000BB' => [qw(DH-DSS-CAMELLIA128-SHA256       DH_DSS_WITH_CAMELLIA_128_CBC_SHA256)],
     '0x030000C1' => [qw(DH-DSS-CAMELLIA256-SHA256       DH_DSS_WITH_CAMELLIA_256_CBC_SHA256)],
-    '0x0300000B' => [qw(EXP-DH-DSS-DES-CBC-SHA          DH_DSS_DES_40_CBC_SHA)],
-    '0x0300000C' => [qw(DH-DSS-DES-CBC-SHA              DH_DSS_DES_64_CBC_SHA)],
-    '0x0300000D' => [qw(DH-DSS-DES-CBC3-SHA             DH_DSS_DES_192_CBC3_SHA)],
     '0x03000030' => [qw(DH-DSS-AES128-SHA               DH_DSS_WITH_AES_128_SHA)],
     '0x03000036' => [qw(DH-DSS-AES256-SHA               DH_DSS_WITH_AES_256_SHA)],
     '0x0300003E' => [qw(DH-DSS-AES128-SHA256            DH_DSS_WITH_AES_128_SHA256)],
     '0x03000068' => [qw(DH-DSS-AES256-SHA256            DH_DSS_WITH_AES_256_SHA256)],
     '0x030000A4' => [qw(DH-DSS-AES128-GCM-SHA256        DH_DSS_WITH_AES_128_GCM_SHA256)],
     '0x030000A5' => [qw(DH-DSS-AES256-GCM-SHA384        DH_DSS_WITH_AES_256_GCM_SHA384)],
-    '0x03000097' => [qw(DH-DSS-SEED-SHA                 DH_DSS_WITH_SEED_SHA)],
-    '0x03000098' => [qw(DH-RSA-SEED-SHA                 DH_RSA_WITH_SEED_SHA)],
-    '0x0300000E' => [qw(EXP-DH-RSA-DES-CBC-SHA          DH_RSA_DES_40_CBC_SHA)],
-    '0x0300000F' => [qw(DH-RSA-DES-CBC-SHA              DH_RSA_DES_64_CBC_SHA)],
-    '0x03000010' => [qw(DH-RSA-DES-CBC3-SHA             DH_RSA_DES_192_CBC3_SHA)],
     '0x03000031' => [qw(DH-RSA-AES128-SHA               DH_RSA_WITH_AES_128_SHA)],
     '0x03000037' => [qw(DH-RSA-AES256-SHA               DH_RSA_WITH_AES_256_SHA)],
     '0x0300003F' => [qw(DH-RSA-AES128-SHA256            DH_RSA_WITH_AES_128_SHA256)],
@@ -1040,8 +2115,6 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300C00A' => [qw(ECDHE-ECDSA-AES256-SHA          ECDHE_ECDSA_WITH_AES_256_CBC_SHA)],
     '0x0300C02C' => [qw(ECDHE-ECDSA-AES256-GCM-SHA384   ECDHE_ECDSA_WITH_AES_256_GCM_SHA384)],
     '0x0300C024' => [qw(ECDHE-ECDSA-AES256-SHA384       ECDHE_ECDSA_WITH_AES_256_SHA384)],
-    '0x03000072' => [qw(ECDHE-ECDSA-CAMELLIA128-SHA256  ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256)],
-    '0x03000073' => [qw(ECDHE-ECDSA-CAMELLIA256-SHA384  ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384)],
     '0x0300CCA9' => [qw(ECDHE-ECDSA-CHACHA20-POLY1305-SHA256 ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256)], # see Note(c)
     '0x0300C006' => [qw(ECDHE-ECDSA-NULL-SHA            ECDHE_ECDSA_WITH_NULL_SHA)],
     '0x0300C007' => [qw(ECDHE-ECDSA-RC4-SHA             ECDHE_ECDSA_WITH_RC4_128_SHA)],
@@ -1052,8 +2125,6 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300C028' => [qw(ECDHE-RSA-AES256-SHA384         ECDHE_RSA_WITH_AES_256_SHA384)],
     '0x0300C02F' => [qw(ECDHE-RSA-AES128-GCM-SHA256     ECDHE_RSA_WITH_AES_128_GCM_SHA256)],
     '0x0300C030' => [qw(ECDHE-RSA-AES256-GCM-SHA384     ECDHE_RSA_WITH_AES_256_GCM_SHA384)],
-    '0x03000076' => [qw(ECDHE-RSA-CAMELLIA128-SHA256    ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256)],
-    '0x03000077' => [qw(ECDHE-RSA-CAMELLIA256-SHA384    ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384)],
     '0x0300CCA8' => [qw(ECDHE-RSA-CHACHA20-POLY1305-SHA256  ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256)], # see Note(c)
     '0x0300C010' => [qw(ECDHE-RSA-NULL-SHA              ECDHE_RSA_WITH_NULL_SHA)],
     '0x0300C011' => [qw(ECDHE-RSA-RC4-SHA               ECDHE_RSA_WITH_RC4_128_SHA)],
@@ -1064,8 +2135,6 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300C026' => [qw(ECDH-ECDSA-AES256-SHA384        ECDH_ECDSA_WITH_AES_256_SHA384)],
     '0x0300C02D' => [qw(ECDH-ECDSA-AES128-GCM-SHA256    ECDH_ECDSA_WITH_AES_128_GCM_SHA256)],
     '0x0300C02E' => [qw(ECDH-ECDSA-AES256-GCM-SHA384    ECDH_ECDSA_WITH_AES_256_GCM_SHA384)],
-    '0x03000074' => [qw(ECDH-ECDSA-CAMELLIA128-SHA256   ECDH_ECDSA_WITH_CAMELLIA_128_CBC_SHA256)],
-    '0x03000075' => [qw(ECDH-ECDSA-CAMELLIA256-SHA384   ECDH_ECDSA_WITH_CAMELLIA_256_CBC_SHA384)],
     '0x0300C001' => [qw(ECDH-ECDSA-NULL-SHA             ECDH_ECDSA_WITH_NULL_SHA)],
     '0x0300C002' => [qw(ECDH-ECDSA-RC4-SHA              ECDH_ECDSA_WITH_RC4_128_SHA)],
     '0x0300C003' => [qw(ECDH-ECDSA-DES-CBC3-SHA         ECDH_ECDSA_WITH_DES_192_CBC3_SHA)],
@@ -1084,8 +2153,6 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300C039' => [qw(ECDHE-PSK-NULL-SHA              ECDHE_PSK_WITH_NULL_SHA)],
     '0x0300C03A' => [qw(ECDHE-PSK-NULL-SHA256           ECDHE_PSK_WITH_NULL_SHA256)],
     '0x0300C03B' => [qw(ECDHE-PSK-NULL-SHA384           ECDHE_PSK_WITH_NULL_SHA384)],
-    '0x03000078' => [qw(ECDH-RSA-CAMELLIA128-SHA256     ECDH_RSA_WITH_CAMELLIA_128_CBC_SHA256)],
-    '0x03000079' => [qw(ECDH-RSA-CAMELLIA256-SHA384     ECDH_RSA_WITH_CAMELLIA_256_CBC_SHA384)],
     '0x0300C00B' => [qw(ECDH-RSA-NULL-SHA               ECDH_RSA_WITH_NULL_SHA)],
     '0x0300C00C' => [qw(ECDH-RSA-RC4-SHA                ECDH_RSA_WITH_RC4_128_SHA)],
     '0x0300C00D' => [qw(ECDH-RSA-DES-CBC3-SHA           ECDH_RSA_WITH_DES_192_CBC3_SHA)],
@@ -1094,67 +2161,50 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300C017' => [qw(AECDH-DES-CBC3-SHA              ECDH_anon_WITH_DES_192_CBC3_SHA)],
     '0x0300C018' => [qw(AECDH-AES128-SHA                ECDH_anon_WITH_AES_128_CBC_SHA)],
     '0x0300C019' => [qw(AECDH-AES256-SHA                ECDH_anon_WITH_AES_256_CBC_SHA)],
-    '0x03000011' => [qw(EXP-EDH-DSS-DES-CBC-SHA         EDH_DSS_DES_40_CBC_SHA)],
-    '0x03000012' => [qw(EDH-DSS-DES-CBC-SHA             EDH_DSS_DES_64_CBC_SHA)],
-    '0x03000013' => [qw(EDH-DSS-DES-CBC3-SHA            EDH_DSS_DES_192_CBC3_SHA)],
-    '0x03000014' => [qw(EXP-EDH-RSA-DES-CBC-SHA         EDH_RSA_DES_40_CBC_SHA)],
-    '0x03000015' => [qw(EDH-RSA-DES-CBC-SHA             EDH_RSA_DES_64_CBC_SHA)],
-    '0x03000016' => [qw(EDH-RSA-DES-CBC3-SHA            EDH_RSA_DES_192_CBC3_SHA)],
-    '0x0300001D' => [qw(FZA-FZA-SHA                     FZA_DMS_FZA_SHA)],     # FORTEZZA_KEA_WITH_FORTEZZA_CBC_SHA
-    '0x0300001C' => [qw(FZA-NULL-SHA                    FZA_DMS_NULL_SHA)],    # FORTEZZA_KEA_WITH_NULL_SHA
-    '0x0300001e' => [qw(FZA-RC4-SHA                     FZA_DMS_RC4_SHA)],     # <== 1e so that it is its own hash entry in crontrast to 1E (duplicate constant definition in openssl)
-    '0x03000023' => [qw(KRB5-DES-CBC3-MD5               KRB5_DES_192_CBC3_MD5)],
-    '0x0300001F' => [qw(KRB5-DES-CBC3-SHA               KRB5_DES_192_CBC3_SHA)],
-    '0x03000029' => [qw(EXP-KRB5-DES-CBC-MD5            KRB5_DES_40_CBC_MD5)],
-    '0x03000026' => [qw(EXP-KRB5-DES-CBC-SHA            KRB5_DES_40_CBC_SHA)],
-    '0x03000022' => [qw(KRB5-DES-CBC-MD5                KRB5_DES_64_CBC_MD5)],
     '0x0300001E' => [qw(KRB5-DES-CBC-SHA                KRB5_DES_64_CBC_SHA)],
-    '0x03000025' => [qw(KRB5-IDEA-CBC-MD5               KRB5_IDEA_128_CBC_MD5)],
-    '0x03000021' => [qw(KRB5-IDEA-CBC-SHA               KRB5_IDEA_128_CBC_SHA)],
-    '0x0300002A' => [qw(EXP-KRB5-RC2-CBC-MD5            KRB5_RC2_40_CBC_MD5)],
-    '0x03000027' => [qw(EXP-KRB5-RC2-CBC-SHA            KRB5_RC2_40_CBC_SHA)],
-    '0x03000024' => [qw(KRB5-RC4-MD5                    KRB5_RC4_128_MD5)],
-    '0x03000020' => [qw(KRB5-RC4-SHA                    KRB5_RC4_128_SHA)],
-    '0x0300002B' => [qw(EXP-KRB5-RC4-MD5                KRB5_RC4_40_MD5)],
-    '0x03000028' => [qw(EXP-KRB5-RC4-SHA                KRB5_RC4_40_SHA)],
-    '0x03000000' => [qw(NULL-NULL                       NULL_WITH_NULL_NULL)], # O-Saft dummy
     '0x0300008A' => [qw(PSK-RC4-SHA                     PSK_WITH_RC4_128_SHA)],
     '0x0300008B' => [qw(PSK-3DES-EDE-CBC-SHA            PSK_WITH_3DES_EDE_CBC_SHA)],
     '0x0300008C' => [qw(PSK-AES128-CBC-SHA              PSK_WITH_AES_128_CBC_SHA)],
     '0x0300008D' => [qw(PSK-AES256-CBC-SHA              PSK_WITH_AES_256_CBC_SHA)],
-    '0x03000008' => [qw(EXP-DES-CBC-SHA                 RSA_DES_40_CBC_SHA)],
-    '0x03000009' => [qw(DES-CBC-SHA                     RSA_DES_64_CBC_SHA)],
-    '0x0300000A' => [qw(DES-CBC3-SHA                    RSA_DES_192_CBC3_SHA)],
+    '0x03000060' => [qw(EXP1024-RC4-MD5                 RSA_EXPORT1024_WITH_RC4_56_MD5)],
     '0x03000061' => [qw(EXP1024-RC2-CBC-MD5             RSA_EXPORT1024_WITH_RC2_CBC_56_MD5)],
     '0x03000062' => [qw(EXP1024-DES-CBC-SHA             RSA_EXPORT1024_WITH_DES_CBC_SHA)],
-    '0x03000060' => [qw(EXP1024-RC4-MD5                 RSA_EXPORT1024_WITH_RC4_56_MD5)],
     '0x03000064' => [qw(EXP1024-RC4-SHA                 RSA_EXPORT1024_WITH_RC4_56_SHA)],
-    '0x03000007' => [qw(IDEA-CBC-SHA                    RSA_IDEA_128_SHA)],
-    '0x03000001' => [qw(NULL-MD5                        RSA_NULL_MD5)],
-    '0x03000002' => [qw(NULL-SHA                        RSA_NULL_SHA)],
-    '0x03000003' => [qw(EXP-RC4-MD5                     RSA_RC4_40_MD5)],
-    '0x03000004' => [qw(RC4-MD5                         RSA_RC4_128_MD5)],
-    '0x03000005' => [qw(RC4-SHA                         RSA_RC4_128_SHA)],
-    '0x03000006' => [qw(EXP-RC2-CBC-MD5                 RSA_RC2_40_MD5)],
-    '0x0300009C' => [qw(AES128-GCM-SHA256               RSA_WITH_AES_128_GCM_SHA256)],  # see Note(d)
-    '0x0300002F' => [qw(AES128-SHA                      RSA_WITH_AES_128_SHA)],
-    '0x0300003C' => [qw(AES128-SHA256                   RSA_WITH_AES_128_SHA256)],
-    '0x0300009D' => [qw(AES256-GCM-SHA384               RSA_WITH_AES_256_GCM_SHA384)],  # see Note(d)
-    '0x03000035' => [qw(AES256-SHA                      RSA_WITH_AES_256_SHA)],
-    '0x0300003D' => [qw(AES256-SHA256                   RSA_WITH_AES_256_SHA256)],
     '0x03000041' => [qw(CAMELLIA128-SHA                 RSA_WITH_CAMELLIA_128_CBC_SHA)],
     '0x03000084' => [qw(CAMELLIA256-SHA                 RSA_WITH_CAMELLIA_256_CBC_SHA)],
     '0x030000BA' => [qw(CAMELLIA128-SHA256              RSA_WITH_CAMELLIA_128_CBC_SHA256)],
     '0x030000C0' => [qw(CAMELLIA256-SHA256              RSA_WITH_CAMELLIA_256_CBC_SHA256)],
-    '0x0300003B' => [qw(NULL-SHA256                     RSA_WITH_NULL_SHA256)],
+    '0x03000097' => [qw(DH-DSS-SEED-SHA                 DH_DSS_WITH_SEED_SHA)],
+    '0x03000098' => [qw(DH-RSA-SEED-SHA                 DH_RSA_WITH_SEED_SHA)],
+    '0x0300009A' => [qw(DHE-RSA-SEED-SHA                DHE_RSA_WITH_SEED_SHA)],
+    '0x0300009B' => [qw(ADH-SEED-SHA                    ADH_WITH_SEED_SHA)],
     '0x03000096' => [qw(SEED-SHA                        RSA_WITH_SEED_SHA)],
+    '0x0300009C' => [qw(AES128-GCM-SHA256               RSA_WITH_AES_128_GCM_SHA256)],  # see Note(d)
+    '0x0300009D' => [qw(AES256-GCM-SHA384               RSA_WITH_AES_256_GCM_SHA384)],  # see Note(d)
+#
+     # https://tools.ietf.org/id/draft-ietf-tls-openpgp-keys-00.txt
+    '0x03000070' => [qw(DHE-DSS-CAST128-CBC-SHA         DHE_DSS_WITH_CAST_128_CBC_SHA)], # CAST128 == CAST5 ?
+    '0x03000071' => [qw(DHE-DSS-CAST128-CBC-RMD         DHE_DSS_WITH_CAST_128_CBC_RMD)], # CAST128 == CAST5 ?
+    '0x03000072' => [qw(DHE-DSS-3DES-EDE-CBC-RMD        DHE_DSS_WITH_3DES_EDE_CBC_RMD)],
+    '0x03000073' => [qw(DHE-DSS-AES128-CBC-RMD          DHE_DSS_WITH_AES_128_CBC_RMD)],
+    '0x03000074' => [qw(DHE-DSS-AES256-CBC-RMD          DHE_DSS_WITH_AES_256_CBC_RMD)],
+    '0x03000075' => [qw(DHE-RSA-CAST128-CBC-SHA         DHE_RSA_WITH_CAST_128_CBC_SHA)],
+    '0x03000076' => [qw(DHE-RSA-CAST128-CBC-RMD         DHE_RSA_WITH_CAST_128_CBC_RMD)],
+    '0x03000077' => [qw(DHE-RSA-3DES-EDE-CBC-RMD        DHE_RSA_WITH_3DES_EDE_CBC_RMD)],
+    '0x03000078' => [qw(DHE-RSA-AES128-CBC-RMD          DHE_RSA_WITH_AES_128_CBC_RMD)],
+    '0x03000079' => [qw(DHE-RSA-AES256-CBC-RMD          DHE_RSA_WITH_AES_256_CBC_RMD)],
+    '0x0300007A' => [qw(RSA-CAST128-CBC-SHA             RSA_WITH_CAST_128_CBC_SHA)],    # CAST128 == CAST5 ?
+    '0x0300007B' => [qw(RSA-CAST128-CBC-RMD             RSA_WITH_CAST_128_CBC_RMD)],    # CAST128 == CAST5 ?
+    '0x0300007C' => [qw(RSA-3DES-EDE-CBC-RMD            RSA_WITH_3DES_EDE_CBC_RMD)],
+    '0x0300007D' => [qw(RSA-AES128-CBC-RMD              RSA_WITH_AES_128_CBC_RMD)],
+    '0x0300007E' => [qw(RSA-AES256-CBC-RMD              RSA_WITH_AES_256_CBC_RMD)],
 #
 #    https://tools.ietf.org/html/rfc8446#appendix-B.4 (TLS 1.3)
-    '0x03001301' => [qw(AES128-GCM-SHA256               AES_128_GCM_SHA256)],           # TLS 1.3; see Note(d)
-    '0x03001302' => [qw(AES256-GCM-SHA384               AES_256_GCM_SHA384)],           # TLS 1.3; see Note(d)
-    '0x03001303' => [qw(CHACHA20-POLY1305-SHA256        CHACHA20_POLY1305_SHA256)],     # TLS 1.3
-    '0x03001304' => [qw(AES128-CCM-SHA256               AES_128_CCM_SHA256)],           # TLS 1.3
-    '0x03001305' => [qw(AES128-CCM8-SHA256              AES_128_CCM_8_SHA256)],         # TLS 1.3
+    '0x03001301' => [qw(TLS13-AES-128-GCM-SHA256        AES_128_GCM_SHA256)],           # TLS 1.3; see Note(d), see Note(e)
+    '0x03001302' => [qw(TLS13-AES-256-GCM-SHA384        AES_256_GCM_SHA384)],           # TLS 1.3; see Note(d), see Note(e)
+    '0x03001303' => [qw(TLS13-CHACHA20-POLY1305-SHA256  CHACHA20_POLY1305_SHA256)],     # TLS 1.3
+    '0x03001304' => [qw(TLS13-AES-128-CCM-SHA256        AES_128_CCM_SHA256)],           # TLS 1.3
+    '0x03001305' => [qw(TLS13-AES-128-CCM8-SHA256       AES_128_CCM_8_SHA256)],         # TLS 1.3
 #
 #    http://tools.ietf.org/html/draft-mavrogiannopoulos-chacha-tls-01
 #    https://tools.ietf.org/html/rfc7905
@@ -1298,6 +2348,49 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x0300FEE1' => [qw(RSA-FIPS-DES-CBC-SHA-2          RSA_FIPS_WITH_DES_CBC_SHA_2)],       # unklar,
     '0x0300FEFE' => [qw(RSA-FIPS-DES-CBC-SHA            RSA_FIPS_WITH_DES_CBC_SHA)],       # openssl-chacha
     '0x0300FEFF' => [qw(RSA-FIPS-3DES-EDE-SHA           RSA_FIPS_WITH_3DES_EDE_CBC_SHA)],  # openssl-chacha
+    # from: http://tools.ietf.org/html/rfc6367
+    '0x0300C072' => [qw(ECDHE-ECDSA-CAMELLIA128-SHA256  ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256)],
+    '0x0300C073' => [qw(ECDHE-ECDSA-CAMELLIA256-SHA384  ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384)],
+    '0x0300C074' => [qw(ECDH-ECDSA-CAMELLIA128-SHA256   ECDH_ECDSA_WITH_CAMELLIA_128_CBC_SHA256 )],
+    '0x0300C075' => [qw(ECDH-ECDSA-CAMELLIA256-SHA384   ECDH_ECDSA_WITH_CAMELLIA_256_CBC_SHA384 )],
+    '0x0300C076' => [qw(ECDHE-RSA-CAMELLIA128-SHA256    ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256  )],
+    '0x0300C077' => [qw(ECDHE-RSA-CAMELLIA256-SHA384    ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384  )],
+    '0x0300C078' => [qw(ECDH-RSA-CAMELLIA128-SHA256     ECDH_RSA_WITH_CAMELLIA_128_CBC_SHA256   )],
+    '0x0300C079' => [qw(ECDH-RSA-CAMELLIA256-SHA384     ECDH_RSA_WITH_CAMELLIA_256_CBC_SHA384   )],
+    '0x0300C07A' => [qw(RSA-CAMELLIA128-GCM-SHA256      RSA_WITH_CAMELLIA_128_GCM_SHA256        )],
+    '0x0300C07B' => [qw(RSA-CAMELLIA256-GCM-SHA384      RSA_WITH_CAMELLIA_256_GCM_SHA384        )],
+    '0x0300C07C' => [qw(DHE-RSA-CAMELLIA128-GCM-SHA256  DHE_RSA_WITH_CAMELLIA_128_GCM_SHA256    )],
+    '0x0300C07D' => [qw(DHE-RSA-CAMELLIA256-GCM-SHA384  DHE_RSA_WITH_CAMELLIA_256_GCM_SHA384    )],
+    '0x0300C07E' => [qw(DH-RSA-CAMELLIA128-GCM-SHA256   DH_RSA_WITH_CAMELLIA_128_GCM_SHA256     )],
+    '0x0300C07F' => [qw(DH-RSA-CAMELLIA256-GCM-SHA384   DH_RSA_WITH_CAMELLIA_256_GCM_SHA384     )],
+    '0x0300C080' => [qw(DHE-DSS-CAMELLIA128-GCM-SHA256  DHE_DSS_WITH_CAMELLIA_128_GCM_SHA256    )],
+    '0x0300C081' => [qw(DHE-DSS-CAMELLIA256-GCM-SHA384  DHE_DSS_WITH_CAMELLIA_256_GCM_SHA384    )],
+    '0x0300C082' => [qw(DH-DSS-CAMELLIA128-GCM-SHA256   DH_DSS_WITH_CAMELLIA_128_GCM_SHA256     )],
+    '0x0300C083' => [qw(DH-DSS-CAMELLIA256-GCM-SHA384   DH_DSS_WITH_CAMELLIA_256_GCM_SHA384     )],
+    '0x0300C084' => [qw(ADH-DSS-CAMELLIA128-GCM-SHA256  DH_anon_DSS_WITH_CAMELLIA_128_GCM_SHA256)],
+    '0x0300C085' => [qw(ADH-DSS-CAMELLIA256-GCM-SHA384  DH_anon_DSS_WITH_CAMELLIA_256_GCM_SHA384)],
+    '0x0300C086' => [qw(ECDHE-ECDSA-CAMELLIA128-GCM-SHA256  ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256)],
+    '0x0300C087' => [qw(ECDHE-ECDSA-CAMELLIA256-GCM-SHA384  ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384)],
+    '0x0300C088' => [qw(ECDH-ECDSA-CAMELLIA128-GCM-SHA256   ECDH_ECDSA_WITH_CAMELLIA_128_GCM_SHA256 )],
+    '0x0300C089' => [qw(ECDH-ECDSA-CAMELLIA256-GCM-SHA384   ECDH_ECDSA_WITH_CAMELLIA_256_GCM_SHA384 )],
+    '0x0300C08A' => [qw(ECDHE-RSA-CAMELLIA128-GCM-SHA256    ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256  )],
+    '0x0300C08B' => [qw(ECDHE-RSA-CAMELLIA256-GCM-SHA384    ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384  )],
+    '0x0300C08C' => [qw(ECDH-RSA-CAMELLIA128-GCM-SHA256 ECDH_RSA_WITH_CAMELLIA_128_GCM_SHA256   )],
+    '0x0300C08D' => [qw(ECDH-RSA-CAMELLIA256-GCM-SHA384 ECDH_RSA_WITH_CAMELLIA_256_GCM_SHA384   )],
+    '0x0300C08E' => [qw(PSK-CAMELLIA128-GCM-SHA256      PSK_WITH_CAMELLIA_128_GCM_SHA256        )],
+    '0x0300C08F' => [qw(PSK-CAMELLIA256-GCM-SHA384      PSK_WITH_CAMELLIA_256_GCM_SHA384        )],
+    '0x0300C090' => [qw(DHE-PSK-CAMELLIA128-GCM-SHA256  DHE_PSK_WITH_CAMELLIA_128_GCM_SHA256    )],
+    '0x0300C091' => [qw(DHE-PSK-CAMELLIA256-GCM-SHA384  DHE_PSK_WITH_CAMELLIA_256_GCM_SHA384    )],
+    '0x0300C092' => [qw(RSA-PSK-CAMELLIA128-GCM-SHA256  RSA_PSK_WITH_CAMELLIA_128_GCM_SHA256    )],
+    '0x0300C093' => [qw(RSA-PSK-CAMELLIA256-GCM-SHA384  RSA_PSK_WITH_CAMELLIA_256_GCM_SHA384    )],
+    '0x0300C094' => [qw(PSK-CAMELLIA128-SHA256          PSK_WITH_CAMELLIA_128_CBC_SHA256        )],
+    '0x0300C095' => [qw(PSK-CAMELLIA256-SHA384          PSK_WITH_CAMELLIA_256_CBC_SHA384        )],
+    '0x0300C096' => [qw(DHE-PSK-CAMELLIA128-SHA256      DHE_PSK_WITH_CAMELLIA_128_CBC_SHA256    )],
+    '0x0300C097' => [qw(DHE-PSK-CAMELLIA256-SHA384      DHE_PSK_WITH_CAMELLIA_256_CBC_SHA384    )],
+    '0x0300C098' => [qw(RSA-PSK-CAMELLIA128-SHA256      RSA_PSK_WITH_CAMELLIA_128_CBC_SHA256    )],
+    '0x0300C099' => [qw(RSA-PSK-CAMELLIA256-SHA384      RSA_PSK_WITH_CAMELLIA_256_CBC_SHA384    )],
+    '0x0300C09A' => [qw(ECDHE-PSK-CAMELLIA128-SHA256    ECDHE_PSK_WITH_CAMELLIA_128_CBC_SHA256  )],
+    '0x0300C09B' => [qw(ECDHE-PSK-CAMELLIA256-SHA384    ECDHE_PSK_WITH_CAMELLIA_256_CBC_SHA384  )],
 #
     '0x03000080' => [qw(GOST94-GOST89-GOST89            GOSTR341094_WITH_28147_CNT_IMIT)], #ok
     '0x03000081' => [qw(GOST2001-GOST89-GOST89          GOSTR341001_WITH_28147_CNT_IMIT)], #ok
@@ -1345,10 +2438,16 @@ our %cipher_names = (   # TODO: define and move to in OSaft/Cipher.pm
     #   hence the hex keys from drafts are named "OLD-"
     #
     # Note(d)
-    #   0x0300009C and 0x0300009D conflicts with 0x03001301 and 0x03001302 (TLS1.3)
-    #   but works here as long as we use the cipher suite names which are converted
-    #   to the proper hex keys by the underlaying (modern >2017) openssl and libssl
-    #   means: we get AES128-GCM-SHA256, AES256-GCM-SHA384 for TLSv1 and TLSv13
+    #   0x0300009C and 0x0300009D conflict with 0x03001301 and 0x03001302 (TLS1.3)
+    #   as they seem to have the same user friendly cipher suite name:  
+    #       AES128-GCM-SHA256, AES256-GCM-SHA384 for TLSv1 and TLSv13
+    #   Their cipher constant is different.  So the cipher name for 0x03001301 and
+    #   0x03001302 is prefixed with  TLS13- .
+    #
+    # Note(e)
+    #   The (human readable) cipher suite name for TLSv13 seem to be non-standard.
+    #   While OpenSSL and most vendors use the scheme  TLS13-AES-* ,  some vendors
+    #   use the (more traditional) scheme  TLS13-AES128  (without -).
 ); # %cipher_names
 
 our %cipher_alias = (   # TODO: define and move to in OSaft/Cipher.pm
@@ -1374,6 +2473,11 @@ our %cipher_alias = (   # TODO: define and move to in OSaft/Cipher.pm
     '0x03000065' => [qw(EXP-EDH-DSS-RC4-56-SHA)],
     '0x03000066' => [qw(EDH-DSS-RC4-SHA)],             # from RSA BSAFE SSL-C
     '0x0300008B' => [qw(PSK-3DES-SHA)],
+
+    '0x03001301' => [qw(TLS13-AES128-GCM-SHA256)],     # TLS 1.3; see Note(d), see Note(e)
+    '0x03001302' => [qw(TLS13-AES256-GCM-SHA384)],     # TLS 1.3; see Note(d), see Note(e)
+    '0x03001304' => [qw(TLS13-AES128-CCM-SHA256)],     # TLS 1.3, see Note(e)
+    '0x03001305' => [qw(TLS13-AES128-CCM8-SHA256    TLS13-AES128-CCM-8-SHA256   TLS13-AES-128-CCM-8-SHA256)],    # TLS 1.3, see Note(e)
 
     # TODO: need to mark following 10 as old ciphers with changed IDs
     '0x03000093' => [qw(RSA-PSK-3DES-EDE-CBC-SHA)],    # ??
@@ -1470,14 +2574,15 @@ our %cfg = (
     'mename'        => "O-Saft ", # my name pretty printed
     'need_netdns'   => 0,       # used for better error message handling only
     'need_timelocal'=> 0,       # -"-
-    # following initialized in _osaft_init()
+    'need_netinfo'  => 1,       # 0: do not load Net::SSLinfo
+    # following initialised in _osaft_init()
     'me'            => "",
     'ARG0'          => "",
-    'ARGV'          => [],      # arguments passed on command line
+    'ARGV'          => [],      # arguments passed on command-line
     'RC-ARGV'       => [],      # arguments read from RC-FILE (set in caller)
     'RC-FILE'       => "",      # our RC-FILE, search in pwd only!
     # following should be in %text, but as %cfg is available everywhere,
-    # it's better defined here and initialized in _osaft_init()
+    # it's better defined here and initialised in _osaft_init()
     'prefix_trace'  => "",      # prefix string used in trace   messages
     'prefix_verbose'=> "",      # prefix string used in verbose messages
 
@@ -1496,7 +2601,6 @@ our %cfg = (
     'linux_debug'   => 0,       # passed to Net::SSLeay::linux_debug
     'verbose'       => 0,       # used for --v
     'v_cipher'      => 0,       # used for --v-cipher
-    'warning'       => 1,       # 1: print warnings; 0: don't print warnings
     'proxyhost'     => "",      # FQDN or IP of proxy to be used
     'proxyport'     => 0,       # port for proxy
     'proxyauth'     => "",      # authentication string used for proxy
@@ -1506,28 +2610,13 @@ our %cfg = (
                                 # protocol to be used with STARTTLS; default: SMTP
                                 # valid protocols: SMTP, IMAP, IMAP2, POP3, FTPS, LDAP, RDP, XMPP
     'starttls_delay'=> 0,       # STARTTLS: time to wait in seconds (to slow down the requests)
-    'starttls_phase'=> [],      # STARTTLS: Array for customized STARTTLS sequences
-    'starttls_error'=> [],      # STARTTLS: Array for customized STARTTLS sequences error handling
+    'starttls_phase'=> [],      # STARTTLS: Array for customised STARTTLS sequences
+    'starttls_error'=> [],      # STARTTLS: Array for customised STARTTLS sequences error handling
     'slow_server_delay' => 0,   # time to wait in seconds after a connection via proxy or before starting STARTTLS sequence
     'connect_delay' => 0,       # time to wait in seconds for starting next cipher check
     'socket_reuse'  => 1,       # 0: close and reopen sockets when SSL connect fails
                                 # 1: reuse existing sockets, even if SSL connect failed
-    'enabled'       => 0,       # 1: only print enabled ciphers
-    'disabled'      => 0,       # 1: only print disabled ciphers
-    'nolocal'       => 0,
-    'experimental'  => 0,       # 1: use experimental functionality
     'ignore_no_conn'=> 0,       # 1: ignore warnings if connection fails, check target anyway
-    'uselwp'        => 0,       # 1: use perls LWP module for HTTP checks # TODO: NOT YET IMPLEMENTED
-    'forcesni'      => 0,       # 1: do not check if SNI seems to be supported by Net::SSLeay
-    'usesni'        => 1,       # 0: do not make connection in SNI mode;
-                                # 1: make connection with SNI set (can be empty string)
-                                # 3: test with and without SNI mode (used with +cipherraw only)
-    'usedns'        => 1,       # 1: make DNS reverse lookup
-    'usemx'         => 0,       # 1: make MX-Record DNS lookup
-    'usehttps'      => 1,       # 1: make HTTPS request
-    'usehttp'       => 1,       # 1: make HTTP  request
-    'usealpn'       => 1,       # 0: do not use -alpn option for openssl
-    'usenpn'        => 1,       # 0: do not use -nextprotoneg option for openssl
     'protos_next'   =>          # all names known for ALPN or NPN
                        'http/1.1,h2c,h2c-14,spdy/1,npn-spdy/2,spdy/2,spdy/3,spdy/3.1,spdy/4a2,spdy/4a4,grpc-exp,h2-14,h2-15,http/2.0,h2',
                                 # even Net::SSLeay functions most likely use an
@@ -1536,43 +2625,31 @@ our %cfg = (
                                 # NOTE: must not contain any white spaces!
     'protos_alpn'   => [],      # initially same as cfg{protos_next}, see _cfg_init()
     'protos_npn'    => [],      # "-"
-    'use_reconnect' => 1,       # 0: do not use -reconnect option for openssl
-    'use_extdebug'  => 1,       # 0: do not use -tlsextdebug option for openssl
     'slowly'        => 0,       # passed to Net::SSLeay::slowly
-    'no_comp'       => 0,       # 1: use OP_NO_COMPRESSION for connetion in Net::SSLeay
+    'usesni'        => 1,       # use SNI extensionn by default (for TLSv1 and above)
     'sni_name'      => undef,   # if set, name to be used for connection with SNI
-                                # must be set to $host if undef and 'usesni'=1 (see above)
+                                # must be set to $host if undef and 'use_sni_name'=1 (see below)
                                 # all other strings are used verbatim, even empty one
     'use_sni_name'  => 0,       # 0: use hostname; 1: use name provided by --sni-name
                                 # used by Net::SSLhello only
     'sclient_opt'   => "",      # argument or option passed to openssl s_client command
-    'no_cert'       => 0,       # 0: get data from certificate; 1, 2, do not get data
     'no_cert_txt'   => "",      # change default text if no data from cert retrieved
     'ca_depth'      => undef,   # depth of peer certificate verification verification
     'ca_crl'        => undef,   # URL where to find CRL file
     'ca_file'       => undef,   # PEM format file with CAs
     'ca_path'       => undef,   # path to directory with PEM files for CAs
                                 # see Net::SSLinfo why undef as default
-    'ca_paths'      => [qw(/etc/ssl/certs /usr/lib/certs /System/Library/OpenSSL)],
-                                # common paths to PEM files for CAs
-    'ca_files'      => [qw(ca-certificates.crt certificates.crt certs.pem)],
-                                # common PEM filenames for CAs
-    'openssl_env'   => undef,   # environment variable OPENSSL if defined
+    'ca_files'      => [qw(ca-certificates.crt certificates.crt certs.pem cert.pem)],
+                                # common PEM filenames for CAs; 1st used as default
+                                # cert.pem instead of certs.pem on Android :-(
+    'ca_paths'      => [qw(/etc/ssl/certs       /usr/lib/certs           /System/Library/OpenSSL /etc/tls/certs)],
+                                # common paths to PEM files for CAs; 1st used as default
+    'openssl_cnfs'  => [qw(/etc/ssl/openssl.cnf /usr/lib/ssl/openssl.cnf /System//Library/OpenSSL/openssl.cnf /usr/ssl/openssl.cnf)],
+                                # common openssl.cnf files for openssl; 1st used as default
     'openssl_cnf'   => undef,   # full path to openssl's openssl.cnf
-    'openssl_cnfs'  => [qw(/usr/lib/ssl/openssl.cnf /etc/ssl/openssl.cnf /System//Library/OpenSSL/openssl.cnf /usr/ssl/openssl.cnf)], # NOT YET USED
+    'openssl_env'   => undef,   # environment variable OPENSSL if defined
     'openssl_fips'  => undef,   # NOT YET USED
     'openssl_msg'   => "",      # '-msg': option needed for openssl versions older than 1.0.2 to get the dh_parameter
-    'exitcode'      => 0,       # 1: exit with status code if any check is "no"
-    'exitcode_checks'   => 1,   # 0: do not count "no" checks for --exitcode
-    'exitcode_cipher'   => 1,   # 0: do not count any ciphers for --exitcode
-    'exitcode_medium'   => 1,   # 0: do not count MEDIUM ciphers for --exitcode
-    'exitcode_weak' => 1,       # 0: do not count  WEAK  ciphers for --exitcode
-    'exitcode_low'  => 1,       # 0: do not count  LOW   ciphers for --exitcode
-    'exitcode_pfs'  => 1,       # 0: do not count ciphers without PFS for --exitcode
-    'exitcode_prot' => 1,       # 0: do not count protocols other than TLSv12 for --exitcode
-    'exitcode_sizes'=> 1,       # 0: do not count size checks for --exitcode
-    'exitcode_quiet'=> 0,       # 1: do not print "EXIT status" message
-    'exitcode_v'    => 0,       # 1: print verbose checks for exit status
     'ignorecase'    => 1,       # 1: compare some strings case insensitive
     'ignorenoreply' => 1,       # 1: treat "no reply" as heartbeat not enabled
     'label'         => 'long',  # fomat of labels
@@ -1583,7 +2660,6 @@ our %cfg = (
                        [qw(SSLv2 SSLv3 TLSv1 TLSv11 TLSv12 TLSv13 DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13)],
     'DTLS_versions' => [qw(DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13)],
                                 # temporary list 'cause DTLS not supported by openssl (6/2015)
-    'ssl_lazy'      => 0,       # 1: lazy check for available SSL protocol functionality
     'SSLv2'         => 1,       # 1: check this SSL version
     'SSLv3'         => 1,       # 1:   "
     'TLSv1'         => 1,       # 1:   "
@@ -1598,7 +2674,6 @@ our %cfg = (
     'DTLSv13'       => 0,       # 1:   "
     'TLS1FF'        => 0,       # dummy for future use
     'DTLSfamily'    => 0,       # dummy for future use
-    'nullssl2'      => 0,       # 1: complain if SSLv2 enabled but no ciphers accepted
     'cipher'        => [],      # ciphers we got with --cipher=
     'cipherpattern' => "ALL:NULL:eNULL:aNULL:LOW:EXP", # openssl pattern for all ciphers
                                 # should simply be   ALL:COMPLEMENTOFALL,  but
@@ -1666,7 +2741,10 @@ our %cfg = (
         # TODO: list with 'key exchange': kRSA, kDHr, kDHd, kDH, kEDH, kECDHr, kECDHe, kECDH, kEECDH
     }, # cipherpatterns
     'ciphermode'    => 'intern',# cipher scan mode, any of 'ciphermodes'
-    'ciphermodes'   => [qw(dump intern openssl ssleay)],      # modes how to scan for ciphers
+    'ciphermodes'   => [qw(dump intern openssl ssleay)],
+                    # modes how to scan for ciphers;
+                    # NOTE: commands_int must contain the commands cipher_dump
+                    #       cipher_intern, cipher_openssl and cipher_ssleay
     'ciphers'       => [],      # contains all ciphers to be tested
     'cipherrange'   => 'rfc',   # the range to be used from 'cipherranges'
     'cipherranges'  => {        # constants for ciphers (NOTE: written as hex)
@@ -1683,16 +2761,22 @@ our %cfg = (
         'yeast'     => "",      # internal list, computed later ...
                                 # push(@all, @{$_}[0]) foreach (values %cipher_names);
         'rfc'       =>          # constants for ciphers defined in various RFCs
-                       "0x03000000 .. 0x030000FF, 0x0300C000 .. 0x0300C0FF,
-                        0x0300CC00 .. 0x0300CCFF, 0x0300FE00 .. 0x0300FFFF,
+                       "0x03000000 .. 0x030000FF, 0x03001300 .. 0x030013FF,
+                        0x0300C000 .. 0x0300C1FF, 0x0300CC00 .. 0x0300CCFF,
+                        0x0300D000 .. 0x0300D0FF,
+                        0x0300DADA,   0x0300EAEA, 0x0300FAFA, 
+                        0x0300FE00 .. 0x0300FFFF,
                        ",
         'shifted'   =>          # constants for ciphers defined in various RFCs shifted with an offset of 64 (=0x40) Bytes
                        "0x03000100 .. 0x0300013F,
-                        0x03000000 .. 0x030000FF, 0x0300C000 .. 0x0300C0FF,
-                        0x0300CC00 .. 0x0300CCFF, 0x0300FE00 .. 0x0300FFFF,
+                        0x03000000 .. 0x030000FF, 0x03001300 .. 0x030013FF,
+                        0x0300C000 .. 0x0300C1FF, 0x0300CC00 .. 0x0300CCFF,
+                        0x0300D000 .. 0x0300D0FF,
+                        0x0300DADA,   0x0300EAEA, 0x0300FAFA, 
+                        0x0300FE00 .. 0x0300FFFF,
                        ",
         'long'      =>          # more lazy list of constants for cipher
-                       "0x03000000 .. 0x030000FF, 0x0300C000 .. 0x0300FFFF",
+                       "0x03000000 .. 0x030013FF, 0x0300C000 .. 0x0300FFFF",
         'huge'      =>          # huge range of constants for cipher
                        "0x03000000 .. 0x0300FFFF",
         'safe'      =>          # safe full range of constants for cipher
@@ -1762,7 +2846,19 @@ our %cfg = (
     'cipher_npns'   => [],      # contains all protocols to be passed for +cipher checks
     'ciphercurves'  => [],      # contains all curves to be passed for +cipher checks
 
-   # following keys for commands, nameing scheme:
+    # List of all extensions sent by protocol
+    'extensions_by_prot' => {   # List all Extensions used by protocol, SSLv2 does not support extensions by design
+         'SSLv3'     => [],      # SSLv3 does not support extensions as originally defined, may be back-ported
+         'TLSv1'     => [qw(renegotiation_info supported_groups ec_point_formats session_ticket)],
+         'TLSv11'    => [qw(renegotiation_info supported_groups ec_point_formats session_ticket)],
+         'TLSv12'    => [qw(renegotiation_info supported_groups ec_point_formats signature_algorithms )],
+         'TLSv13'    => [qw(supported_versions supported_groups ec_point_formats signature_algorithms
+                            session_ticket renegotiation_info encrypt_then_mac
+                            extended_master_secret psk_key_exchange_modes key_share
+                         )],
+    }, # extensions_by_prot
+
+   # following keys for commands, naming scheme:
    #     do         - the list off all commands to be performed
    #     commands_* - internal list for various types of commands
    #     cmd-*      - list for "summary" commands, can be redifined by user
@@ -1771,7 +2867,7 @@ our %cfg = (
    # TODO: need to unify  cmd-* and need-* and regex->cmd-*;
    #       see also _need_* functions and "construct list for special commands"
    #       in o-saft.pl
-   # config. key        list      description
+   # config. key       list       description
    #------------------+---------+----------------------------------------------
     'do'            => [],      # commands to be performed
     'commands'      => [],      # contains all commands from %data, %checks and commands_int
@@ -1780,17 +2876,19 @@ our %cfg = (
     'commands_usr'  => [],      # contains all commands defined by user with
                                 # option --cfg-cmd=* ; see _cfg_set()
     'commands_exp'  => [        # experimental commands
-                        qw(sloth),
                        ],
     'commands_notyet'=>[        # commands and checks NOT YET IMPLEMENTED
-                        qw(zlib lzo open_pgp fallback closure order sgc scsv time),
+                        qw(zlib lzo open_pgp fallback closure sgc scsv time
+                           cps_valid cipher_order cipher_weak
+                        ),
                        ],
     'commands_int'  => [        # add internal commands
                                 # these have no key in %data or %checks
                         qw(
-                         check cipher dump check_sni exec help info info--v http
-                         quick list libversion sizes s_client version quit
-                         sigkey bsi ev cipherall cipherraw cipher_dh cipher_default
+                         cipher cipher_intern cipher_openssl cipher_ssleay
+                         cipher_dump   cipher_dh cipher_default
+                         bsi check check_sni dump ev exec help info info--v http
+                         quick list libversion sigkey sizes s_client version quit
                         ),
                                 # internal (debugging) commands
                       # qw(options cert_type),  # will be seen with +info--v only
@@ -1851,7 +2949,6 @@ our %cfg = (
                         qw(certificate extensions pem pubkey sigdump text
                          chain chain_verify ocsp_response_data)
                        ],
-    'ignore-out'    => [],      # commands (output) to be ignored, SEE Note:ignore-out
 
    # need-* lists used to improve performance and warning messages
     'need-sslv3'    => [        # commands which need SSLv3 protocol
@@ -1860,7 +2957,8 @@ our %cfg = (
                          tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525
                        )],
     'need-cipher'   => [        # commands which need +cipher
-                        qw(check cipher cipher_dh cipher_strong cipher_weak
+                        qw(check cipher cipher_dh  cipher_strong cipher_weak
+                         cipher_dump cipher_intern cipher_ssleay cipher_openssl
                          cipher_null cipher_adh cipher_cbc cipher_des cipher_edh
                          cipher_exp  cipher_rc4 cipher_pfs cipher_pfsall
                          beast crime time breach drown freak logjam
@@ -1870,8 +2968,9 @@ our %cfg = (
                        )],
                                 # TODO: need simple check for protocols
     'need-default'  => [        # commands which need selected cipher
-                        qw(check cipher cipherall cipher_default
-                           cipher_pfs cipher_order cipher_strong cipher_selected),
+                        qw(check cipher cipher_default
+                         cipher_dump cipher_intern cipher_ssleay cipher_openssl
+                         cipher_pfs  cipher_order  cipher_strong cipher_selected),
                         qw(sslv3  tlsv1   tlsv10  tlsv11 tlsv12),
                                 # following checks may cause errors because
                                 # missing functionality (i.e in openssl) # 10/2015
@@ -1882,6 +2981,8 @@ our %cfg = (
                          cipher_pfs cipher_pfsall cipher_cbc cipher_des
                          cipher_edh cipher_exp cipher_rc4 cipher_selected
                          ev+ ev- tr_02102+ tr_02102- tr_03116+ tr_03116-
+                         ocsp_response ocsp_response_status ocsp_stapling
+                         ocsp_uri ocsp_valid
                          rfc_7525 rfc_6125_names rfc_2818_names
                        )],
     'need-checkalnp'=> [        # commands which need checkalpn()
@@ -1897,7 +2998,7 @@ our %cfg = (
                          krb5 psk_hint psk_identity srp heartbeat ocsp_stapling
                          cipher_selected cipher_pfs ccs crime
                        )],
-    'need-checkhttp'=> [qw(pkp_pins)],  # commands which need checkhttp(); more will be added in _init
+    'need-checkhttp'=> [qw(https_pins)],# commands which need checkhttp(); more will be added in _init
     'need-checkprot'=> [        # commands which need checkprot(), should be same as in 'cmd-prots'
                         qw(
                          sslversion
@@ -1913,7 +3014,7 @@ our %cfg = (
                        ],
     'data_hex'      => [        # data values which are in hex values
                                 # used in conjunction with --format=hex
-                                # not usefull in this list: serial extension
+                                # not useful in this list: serial extension
                         qw(
                          fingerprint fingerprint_hash fingerprint_md5
                          fingerprint_sha1 fingerprint_sha2
@@ -1922,18 +3023,90 @@ our %cfg = (
                        )],      # fingerprint is special, see _ishexdata()
    #------------------+---------+----------------------------------------------
 
-   # option key        default   description
+    'ignore-out'    => [],      # commands (output) to be ignored, SEE Note:ignore-out
+   # out->option key           default   description
+   #--------------------------+-----+------------------------------------------
+    'out' =>    {      # configurations for data to be printed
+        'disabled'          => 1,   # 1: print disabled ciphers
+        'enabled'           => 1,   # 1: print enabled ciphers
+        'header'            => 0,   # 1: print header lines in output
+        'hostname'          => 0,   # 1: print hostname (target) as prefix for each line
+        'hint_cipher'       => 1,   # 1: print hints for +cipher command
+        'hint_check'        => 1,   # 1: print hints for +check commands
+        'hint_info'         => 1,   # 1: print hints for +info commands
+        'hint'              => 1,   # 1: print hints for +cipher +check +info
+        'key'               => 0,   # 1: print internal variable names for %data and %checks (was traceKEY)
+        'traceARG'          => 0,   # 1: (trace) print argument processing
+        'traceCMD'          => 0,   # 1: (trace) print command processing
+        'traceTIME'         => 0,   # 1: (trace) print additiona time for benchmarking
+        'time_absolut'      => 0,   # 1: (trace) --traceTIME uses absolut timstamps
+        'warning'           => 1,   # 1: print warnings
+        'score'             => 0,   # 1: print scoring
+        'ignore'            => [],  # commands (output) to be ignored, SEE Note:ignore-out
+        'exitcode'          => 0,   # 1: print verbose checks for exit status
+        'exitcode_checks'   => 1,   # 0: do not count "no" checks for --exitcode
+        'exitcode_cipher'   => 1,   # 0: do not count any ciphers for --exitcode
+        'exitcode_medium'   => 1,   # 0: do not count MEDIUM ciphers for --exitcode
+        'exitcode_weak'     => 1,   # 0: do not count  WEAK  ciphers for --exitcode
+        'exitcode_low'      => 1,   # 0: do not count  LOW   ciphers for --exitcode
+        'exitcode_pfs'      => 1,   # 0: do not count ciphers without PFS for --exitcode
+        'exitcode_prot'     => 1,   # 0: do not count protocols other than TLSv12 for --exitcode
+        'exitcode_sizes'    => 1,   # 0: do not count size checks for --exitcode
+        'exitcode_quiet'    => 0,   # 1: do not print "EXIT status" message
+    }, # out
+   #--------------------------+-----+------------------------------------------
+
+   # use->option key     default  description
+   #----------------------+-----+----------------------------------------------
+    'use' =>    {      # configurations to use or do some specials
+        'mx'            => 0,   # 1: make MX-Record DNS lookup
+        'dns'           => 1,   # 1: make DNS reverse lookup
+        'http'          => 1,   # 1: make HTTP  request with default (Net::LLeay) settings
+                                # 2: make HTTP  request without headers User-Agent and Accept
+        'https'         => 1,   # 1: make HTTPS request with default (Net::LLeay) settings
+                                # 2: make HTTPS request without headers User-Agent and Accept
+        'forcesni'      => 0,   # 1: do not check if SNI seems to be supported by Net::SSLeay
+        'sni'           => 1,   # 0: do not make connection in SNI mode
+                                # 1: make connection with SNI set (can be empty string)
+                                # 3: test with and without SNI mode (used with Net::SSLhello::checkSSLciphers only)
+        'lwp'           => 0,   # 1: use perls LWP module for HTTP checks # TODO: NOT YET IMPLEMENTED
+        'alpn'          => 1,   # 0: do not use -alpn option for openssl
+        'npn'           => 1,   # 0: do not use -nextprotoneg option for openssl
+        'reconnect'     => 1,   # 0: do not use -reconnect option for openssl
+        'extdebug'      => 1,   # 0: do not use -tlsextdebug option for openssl
+        'cert'          => 1,   # 0: do not get data from certificate
+        'no_comp'       => 0,   # 0: do not use OP_NO_COMPRESSION for connetion in Net::SSLeay
+        'ssl_lazy'      => 0,   # 1: lazy check for available SSL protocol functionality (Net::SSLeay problem)
+        'nullssl2'      => 0,   # 1: complain if SSLv2 enabled but no ciphers accepted
+        'ssl_error'     => 1,   # 1: stop connecting to target after ssl-error-max failures
+        'experimental'  => 0,   # 1: use, print experimental functionality
+        'exitcode'      => 0,   # 1: exit with status code if any check is "no"
+                                # see also 'out'->'exitcode'
+    }, # use
+   #----------------------+-----+----------------------------------------------
+
+   # SEE Note:tty
+   # following keys used when --tty (or similar) option was used
+   # i.g. the code will use the values only   if defined $cfg{'tty'}->{'width'}
+   # option key        default    description
+   #------------------+---------+----------------------------------------------
+    'tty' =>    {      # configuration for tty and behaviour according tty
+        'width'     => undef,   # screen width (columns) of the tty
+                                # NOTE: the value undef is used to detect if the
+                                #       option --tty was used
+        'ident'     => 2,       # left ident spaces, used to replace leftmost 8 spaces
+        'arrow'     => "↲",     # "continous arrow when line is split
+                                # ← 0x2190, ↲ 0x21b2, ⮠ 0x2ba0, ⤶ 0x2936, ⤸ 0x2938, 
+                                # NOTE: it's mandatory to have:  "use utf8"
+    }, # tty
+
+   # option key        default    description
    #------------------+---------+----------------------------------------------
     'opt-v'         => 0,       # 1 when option -v was given
     'opt-V'         => 0,       # 1 when option -V was given
     'format'        => "",      # empty means some slightly adapted values (no \s\n)
     'formats'       => [qw(csv html json ssv tab xml fullxml raw hex 0x esc)],
-    'out_header'    => 0,       # print header lines in output
-    'out_score'     => 0,       # print scoring; default for +check
-    'out_hint'      => 1,       # 1: print hints; 0: don't print hints
-    'out_hint_cipher'   => 1,   # 1: print hints for +cipher command
-    'out_hint_check'=> 1,       # 1: print hints for +check commands
-    'out_hint_info' => 1,       # 1: print hints for +info commands
+                                # not yet used: csv html json ssv tab xml fullxml
     'tmplib'        => "/tmp/yeast-openssl/",   # temp. directory for openssl and its libraries
     'pass_options'  => "",      # options to be passeed thru to other programs
     'mx_domains'    => [],      # list of mx-domain:port to be processed
@@ -1957,99 +3130,112 @@ our %cfg = (
                                 #       higher, which results in a performance
                                 #       bottleneck, obviously
                                 #  see 'sslerror' settings and options also
+
+   #----------------+----------------------------------------------------------
     'openssl'  =>   {  # configurations for various openssl functionality
-       #'openssl'   => "",      # if set, full path of openssl executable
-                                # same data structure as in Net::SSLinfo
-                                # not all values used yet
-        #--------------+--------+---------------------------------------------
-        # key (=option) supported=1    warning message if option is missing
-        #--------------+--------+---------------------------------------------
-        '-alpn'         => [ 1,   "checks with ALPN disabled"],
-        '-npn'          => [ 1,   "checks with NPN  disabled"],
-        '-nextprotoneg' => [ 1,   "checks with NPN  disabled"], # alias for -npn
-        '-reconnect'    => [ 1,   "checks with openssl reconnect disabled"],
-        '-fallback_scsv'=> [ 1,   "checks for TLS_FALLBACK_SCSV wrong"],
-        '-comp'         => [ 1,   "<<NOT YET USED>>"],
-        '-no_comp'      => [ 1,   "<<NOT YET USED>>"],
-        '-no_tlsext'    => [ 1,   "<<NOT YET USED>>"],
-        '-no_ticket'    => [ 1,   "<<NOT YET USED>>"],
-        '-serverinfo'   => [ 1,   "checks without TLS extension disabled"],
-        '-servername'   => [ 1,   "checks with TLS extension SNI disabled"],
-        '-serverpref'   => [ 1,   "<<NOT YET USED>>"],
-        '-showcerts'    => [ 1,   "<<NOT YET USED>>"],
-        '-curves'       => [ 1,   "using -curves disabled"],
-        '-debug'        => [ 1,   "<<NOT YET USED>>"],
-        '-bugs'         => [ 1,   "<<NOT YET USED>>"],
-        '-key'          => [ 1,   "<<NOT YET USED>>"],
-        '-msg'          => [ 1,   "using -msg disabled, DH paramaters missing or wrong"],
-        '-nbio'         => [ 1,   "<<NOT YET USED>>"],
-        '-psk'          => [ 1,   "PSK  missing or wrong"],
-        '-psk_identity' => [ 1,   "PSK identity missing or wrong"],
-        '-pause'        => [ 1,   "<<NOT YET USED>>"],
-        '-prexit'       => [ 1,   "<<NOT YET USED>>"],
-        '-proxy'        => [ 1,   "<<NOT YET USED>>"],
-        '-quiet'        => [ 1,   "<<NOT YET USED>>"],
-        '-sigalgs'      => [ 1,   "<<NOT YET USED>>"],
-        '-state'        => [ 1,   "<<NOT YET USED>>"],
-        '-status'       => [ 1,   "<<NOT YET USED>>"],
-        '-strict'       => [ 1,   "<<NOT YET USED>>"],
-        '-client_sigalgs' => [ 1, "<<NOT YET USED>>"],
-        '-tlsextdebug'    => [ 1, "TLS extension missing or wrong"],
-        '-record_padding'       => [ 1, "<<NOT YET USED>>"],
-        '-no_renegotiation'     => [ 1, "<<NOT YET USED>>"],
-        '-legacyrenegotiation'  => [ 1, "<<NOT YET USED>>"],
-        '-legacy_renegotiation' => [ 1, "<<NOT YET USED>>"],
-        '-legacy_server_connect'    => [ 1, "<<NOT YET USED>>"],
-        '-no_legacy_server_connect' => [ 1, "<<NOT YET USED>>"],
-        '-nbio_test'    => [ 1,   "<<NOT YET USED>>"],
-        '-CAfile'       => [ 1,   "using -CAfile disabled"],
-        '-CApath'       => [ 1,   "using -CApath disabled"],
-        #--------------+--------+---------------------------------------------
-    },
+                       # same data structure as Net::SSLinfo's %_OpenSSL_opt
+                       # not all values used yet
+                       # default value 1 means supported by openssl, will be
+                       # structure initialised correctly in _check_openssl()
+                       # which uses Net::SSLinfo::s_client_check()
+        #------------------+-------+-------------------------------------------
+        # key (=option) supported=1  warning message if option is missing
+        #------------------+-------+-------------------------------------------
+        '-CAfile'           => [ 1, "using -CAfile disabled"        ],
+        '-CApath'           => [ 1, "using -CApath disabled"        ],
+        '-alpn'             => [ 1, "checks with ALPN disabled"     ],
+        '-npn'              => [ 1, "checks with NPN  disabled"     ],
+        '-nextprotoneg'     => [ 1, "checks with NPN  disabled"     ], # alias for -npn
+        '-reconnect'        => [ 1, "checks with openssl reconnect disabled"],
+        '-fallback_scsv'    => [ 1, "checks for TLS_FALLBACK_SCSV wrong"    ],
+        '-comp'             => [ 1, "<<NOT YET USED>>"              ],
+        '-no_comp'          => [ 1, "<<NOT YET USED>>"              ],
+        '-no_tlsext'        => [ 1, "<<NOT YET USED>>"              ],
+        '-no_ticket'        => [ 1, "<<NOT YET USED>>"              ],
+        '-serverinfo'       => [ 1, "checks without TLS extension disabled" ],
+        '-servername'       => [ 1, "checks with TLS extension SNI disabled"],
+        '-serverpref'       => [ 1, "<<NOT YET USED>>"              ],
+        '-showcerts'        => [ 1, "<<NOT YET USED>>"              ],
+        '-curves'           => [ 1, "using -curves disabled"        ],
+        '-debug'            => [ 1, "<<NOT YET USED>>"              ],
+        '-bugs'             => [ 1, "<<NOT YET USED>>"              ],
+        '-key'              => [ 1, "<<NOT YET USED>>"              ],
+        '-msg'              => [ 1, "using -msg disabled, DH paramaters missing or wrong"],
+        '-nbio'             => [ 1, "<<NOT YET USED>>"              ],
+        '-psk'              => [ 1, "PSK  missing or wrong"         ],
+        '-psk_identity'     => [ 1, "PSK identity missing or wrong" ],
+        '-pause'            => [ 1, "<<NOT YET USED>>"              ],
+        '-prexit'           => [ 1, "<<NOT YET USED>>"              ],
+        '-proxy'            => [ 1, "<<NOT YET USED>>"              ],
+        '-quiet'            => [ 1, "<<NOT YET USED>>"              ],
+        '-sigalgs'          => [ 1, "<<NOT YET USED>>"              ],
+        '-state'            => [ 1, "<<NOT YET USED>>"              ],
+        '-status'           => [ 1, "<<NOT YET USED>>"              ],
+        '-strict'           => [ 1, "<<NOT YET USED>>"              ],
+        '-nbio_test'        => [ 1, "<<NOT YET USED>>"              ],
+        '-tlsextdebug'      => [ 1, "TLS extension missing or wrong"],
+        '-client_sigalgs'   => [ 1, "<<NOT YET USED>>"              ],
+        '-record_padding'   => [ 1, "<<NOT YET USED>>"              ],
+        '-no_renegotiation' => [ 1, "<<NOT YET USED>>"              ],
+        '-legacyrenegotiation'      => [ 1, "<<NOT YET USED>>"      ],
+        '-legacy_renegotiation'     => [ 1, "<<NOT YET USED>>"      ],
+        '-legacy_server_connect'    => [ 1, "<<NOT YET USED>>"      ],
+        '-no_legacy_server_connect' => [ 1, "<<NOT YET USED>>"      ],
+        #------------------+-------+-------------------------------------------
+    }, # openssl
+    'openssl_option_map' => {   # map our internal option to openssl option; used our Net:SSL*
+        # will be initialised from %prot
+     },
+    'openssl_version_map' => {  # map our internal option to openssl version (hex value); used our Net:SSL*
+        # will be initialised from %prot
+     },
+
+   # ssleay->option      default  description
+   #----------------------+-----+----------------------------------------------
     'ssleay'   =>   {  # configurations for various Net::SSLeay functionality
-                                # 1: if available (see _check_functions()) is default
-        'openssl'   => 1,       # OPENSSL_VERSION_NUMBER()
-        'get_alpn'  => 1,       # P_alpn_selected available()
-        'get_npn'   => 1,       # P_next_proto_negotiated()
-        'set_alpn'  => 1,       # CTX_set_alpn_protos()
-        'set_npn'   => 1,       # CTX_set_next_proto_select_cb()
-        'can_npn'   => 1,       # same as get_npn, just an alias
-        'can_ecdh'  => 1,       # can_ecdh()
-        'can_sni'   => 1,       # for openssl version > 0x01000000
-        'can_ocsp'  => 1,       # OCSP_cert2ids
-        'iosocket'  => 1,       # $IO::Socket::SSL::VERSION # TODO: wrong container
+                                # 1: if available is default (see _check_functions())
+        'openssl'       => 1,   # OPENSSL_VERSION_NUMBER()
+        'get_alpn'      => 1,   # P_alpn_selected available()
+        'get_npn'       => 1,   # P_next_proto_negotiated()
+        'set_alpn'      => 1,   # CTX_set_alpn_protos()
+        'set_npn'       => 1,   # CTX_set_next_proto_select_cb()
+        'can_npn'       => 1,   # same as get_npn, just an alias
+        'can_ecdh'      => 1,   # can_ecdh()
+        'can_sni'       => 1,   # for openssl version > 0x01000000
+        'can_ocsp'      => 1,   # OCSP_cert2ids
+        'iosocket'      => 1,   # $IO::Socket::SSL::VERSION # TODO: wrong container
     },
-    'ssl_error'     => 1,       # stop connecting to target after ssl-error-max failures
+    # 'ssl_error'               # see 'use' above
     'sslerror' =>   {  # configurations for TCP SSL protocol
-        'timeout'   => 1,       # timeout to receive ssl-answer
-        'max'       => 5,       # max. consecutive errors
-        'total'     => 10,      # max. overall errors
+        'timeout'       => 1,   # timeout to receive ssl-answer
+        'max'           => 5,   # max. consecutive errors
+        'total'         => 10,  # max. overall errors
                                 # following are NOT YET fully implemented:
-        'delay'     => 0,       # if > 0 continue trying to connect after this time
-        'per_prot'  => 1,       # if > 0 detection and count are per SSL version
-        'ignore_no_conn'   => 0,# 0: ignore warnings if connection fails, check target anyway
+        'delay'         => 0,   # if > 0 continue trying to connect after this time
+        'per_prot'      => 1,   # if > 0 detection and count are per SSL version
+        'ignore_no_conn' => 0,  # 0: ignore warnings if connection fails, check target anyway
                                 # 1: print  warnings if connection fails, don't check target
         'ignore_handshake' => 1,# 1: treat "failed handshake" as error,   don't check target
-    },
+    }, # ssl_error
     'sslhello' =>   {  # configurations for TCP SSL protocol (mainly used in Net::SSLhello)
-        'timeout'   => 2,       # timeout to receive ssl-answer
-        'retry'     => 2,       # number of retry when timeout
-        'maxciphers'=> 32,      # number of ciphers sent in SSL3/TLS Client-Hello
+        'timeout'       => 2,   # timeout to receive ssl-answer
+        'retry'         => 2,   # number of retry when timeout
+        'maxciphers'    => 32,  # number of ciphers sent in SSL3/TLS Client-Hello
         'usesignaturealg' => 1, # 1: use extension "signature algorithm"
-        'useecc'    => 1,       # 1: use supported elliptic curves
-        'useecpoint'=> 1,       # 1: use ec_point_formats extension
-        'usereneg'  => 0,       # 1: secure renegotiation
+        'useecc'        => 1,   # 1: use supported elliptic curves
+        'useecpoint'    => 1,   # 1: use ec_point_formats extension
+        'usereneg'      => 0,   # 1: secure renegotiation
         'double_reneg'  => 0,   # 0: do not send reneg_info extension if the cipher_spec already includes SCSV
                                 #    "TLS_EMPTY_RENEGOTIATION_INFO_SCSV" {0x00, 0xFF}
         'nodatanocipher'=> 1,   # 1: do not abort testing next cipher for some TLS intolerant Servers 'NoData or Timeout Equals to No Cipher'
     },
-    'legacy'        => "simple",
-    'legacys'       => [qw(cnark sslaudit sslcipher ssldiagnos sslscan ssltest
-                        ssltest-g sslyze testsslserver thcsslcheck openssl
-                        simple full compact quick owasp)],
-                       # SSLAudit, THCSSLCheck, TestSSLServer are converted using lc()
-    'showhost'      => 0,       # 1: prefix printed line with hostname
-    'usr_args'      => [],      # list of all arguments --usr* (to be used in o-saft-usr.pm)
+   #----------------------+-----+----------------------------------------------
+    'legacy'            => "simple",
+    'legacys'           => [qw(cnark sslaudit sslcipher ssldiagnos sslscan
+                            ssltest ssltest-g sslyze testsslserver thcsslcheck
+                            openssl simple full compact quick owasp)],
+                           # SSLAudit, THCSSLCheck, TestSSLServer are converted using lc()
+    'usr_args'          => [],  # list of all arguments --usr* (to be used in o-saft-usr.pm)
    #------------------+---------+----------------------------------------------
     'data'  => {       # data provided (mainly used for testing and debugging)
         'file_sclient'  => "",  # file containing data from "openssl s_client "
@@ -2059,76 +3245,79 @@ our %cfg = (
                                 # i.e. "openssl s_client -showcerts ..."
     }, # data
    #------------------+---------+----------------------------------------------
-   #------------------+--------------------------------------------------------
+
+   # regex->type           RegEx
+   #----------------------+----------------------------------------------------
     'regex' => {
         # RegEx for matching commands and options
-        'cmd-http'  => '^h?(?:ttps?|sts)_',     # match keys for HTTP
-        'cmd-hsts'  => '^h?sts',                # match keys for (H)STS
-        'cmd-sizes' => '^(?:cnt|len)_',         # match keys for length, sizes etc.
-        'cmd-cfg'   => '(?:cmd|checks?|data|info|hint|text|scores?)',# --cfg-* commands
+        'cmd-http'      => '^h?(?:ttps?|sts)_', # match keys for HTTP
+        'cmd-hsts'      => '^h?sts',            # match keys for (H)STS
+        'cmd-sizes'     => '^(?:cnt|len)_',     # match keys for length, sizes etc.
+        'cmd-cfg'       => '(?:cmd|checks?|data|info|hint|text|scores?)',# --cfg-* commands
         'commands_int'  => '^(?:cn_nosni|valid_(?:year|month|day|host)s?)', # internal data only, no command
-        'opt_empty' => '(?:[+]|--)(?:cmd|help|host|port|format|legacy|timeout|trace|openssl|(?:cipher|proxy|sep|starttls|exe|lib|ca-|cfg-|ssl-|usr-).*)',
-                       # these options may have no value
-                       # i.e.  --cmd=   ; this may occour in CGI mode
+        'opt_empty'     => '(?:[+]|--)(?:cmd|help|host|port|format|legacy|timeout|trace|openssl|(?:cipher|proxy|sep|starttls|exe|lib|ca-|cfg-|ssl-|usr-).*)',
+                           # these options may have no value
+                           # i.e.  --cmd=   ; this may occour in CGI mode
         'std_format'    => '^(?:unix|raw|crlf|utf8|win32|perlio)$', # match keys for --std-format
 
         # RegEx for matching strings to anonymise in output 
         'anon_output'   => '',  # pattern for strings to be anonymised in output
-                       # SEE Note:anon-out
+                           # SEE Note:anon-out
 
         # RegEx for matching SSL protocol keys in %data and %checks
-        'SSLprot'   => '^(SSL|D?TLS)v[0-9]',    # match keys SSLv2, TLSv1, ...
+        'SSLprot'       => '^(SSL|D?TLS)v[0-9]',    # match keys SSLv2, TLSv1, ...
 
         # RegEx for matching SSL cipher-suite names
         # First some basic RegEx used later on, either in following RegEx or
         # as $cfg{'regex'}->{...}  itself.
-        '_or-'      => '[\+_-]',
-                       # tools use _ or - as separator character; + used in openssl
-        'ADHorDHA'  => '(?:A(?:NON[_-])?DH|DH(?:A|[_-]ANON))[_-]',
-                       # Anonymous DH has various acronyms:
-                       #     ADH, ANON_DH, DHA, DH-ANON, DH_Anon, ...
-                       # TODO:missing: AECDH
-        'RC4orARC4' => '(?:ARC(?:4|FOUR)|RC4)',
-                       # RC4 has other names due to copyright problems:
-                       #     ARC4, ARCFOUR, RC4
-        '3DESorCBC3'=> '(?:3DES(?:[_-]EDE)[_-]CBC|DES[_-]CBC3)',
-                       # Tripple DES is used as 3DES-CBC, 3DES-EDE-CBC, or DES-CBC3
-        'DESor3DES' => '(?:[_-]3DES|DES[_-]_192)',
-                       # Tripple DES is used as 3DES or DES_192
-        'DHEorEDH'  => '(?:DHE|EDH)[_-]',
-                       # DHE and EDH are 2 acronyms for the same thing
-        'EC-DSA'    => 'EC(?:DHE|EDH)[_-]ECDSA',
-        'EC-RSA'    => 'EC(?:DHE|EDH)[_-]RSA',
-                       # ECDHE-RSA or ECDHE-ECDSA
-        'EC'        => 'EC(?:DHE|EDH)[_-]',
-        'EXPORT'    => 'EXP(?:ORT)?(?:40|56|1024)?[_-]',
-                       # EXP, EXPORT, EXPORT40, EXP1024, EXPORT1024, ...
-        'FRZorFZA'  => '(?:FORTEZZA|FRZ|FZA)[_-]',
-                       # FORTEZZA has abbreviations FZA and FRZ
-                       # unsure about FORTEZZA_KEA
-        'SHA2'      => 'sha(?:2|224|256|384|512)',
-                       # any SHA2, just sha2 is too lazy
-        'AES-GCM'   => 'AES(?:128|256)[_-]GCM[_-]SHA(?:256|384|512)',
-                       # any AES128-GCM or AES256-GCM
-        'SSLorTLS'  => '^(?:SSL[23]?|TLS[12]?|PCT1?)[_-]',
-                       # Numerous protocol prefixes are in use:
-                       #     PTC, PCT1, SSL, SSL2, SSL3, TLS, TLS1, TLS2,
-        'aliases'   => '(?:(?:DHE|DH[_-]ANON|DSS|RAS|STANDARD)[_-]|EXPORT_NONE?[_-]?XPORT|STRONG|UNENCRYPTED)',
-                       # various variants for aliases to select cipher groups
+        '_or-'          => '[\+_-]',
+                           # tools use _ or - as separator character; + used in openssl
+        'ADHorDHA'      => '(?:A(?:NON[_-])?DH|DH(?:A|[_-]ANON))[_-]',
+                           # Anonymous DH has various acronyms:
+                           #     ADH, ANON_DH, DHA, DH-ANON, DH_Anon, ...
+                           # TODO:missing: AECDH
+        'RC4orARC4'     => '(?:ARC(?:4|FOUR)|RC4)',
+                           # RC4 has other names due to copyright problems:
+                           #     ARC4, ARCFOUR, RC4
+        '3DESorCBC3'    => '(?:3DES(?:[_-]EDE)[_-]CBC|DES[_-]CBC3)',
+                           # Tripple DES is used as 3DES-CBC, 3DES-EDE-CBC, or DES-CBC3
+        'DESor3DES'     => '(?:[_-]3DES|DES[_-]_192)',
+                           # Tripple DES is used as 3DES or DES_192
+        'DHEorEDH'      => '(?:DHE|EDH)[_-]',
+                           # DHE and EDH are 2 acronyms for the same thing
+        'EC-DSA'        => 'EC(?:DHE|EDH)[_-]ECDSA',
+        'EC-RSA'        => 'EC(?:DHE|EDH)[_-]RSA',
+                           # ECDHE-RSA or ECDHE-ECDSA
+        'EC'            => 'EC(?:DHE|EDH)[_-]',
+        'EXPORT'        => 'EXP(?:ORT)?(?:40|56|1024)?[_-]',
+                           # EXP, EXPORT, EXPORT40, EXP1024, EXPORT1024, ...
+        'FRZorFZA'      => '(?:FORTEZZA|FRZ|FZA)[_-]',
+                           # FORTEZZA has abbreviations FZA and FRZ
+                           # unsure about FORTEZZA_KEA
+        'SHA2'          => 'sha(?:2|224|256|384|512)',
+                           # any SHA2, just sha2 is too lazy
+        'AES-GCM'       => 'AES(?:128|256)[_-]GCM[_-]SHA(?:256|384|512)',
+                           # any AES128-GCM or AES256-GCM
+        'SSLorTLS'      => '^(?:SSL[23]?|TLS[12]?|PCT1?)[_-]',
+                           # Numerous protocol prefixes are in use:
+                           #     PTC, PCT1, SSL, SSL2, SSL3, TLS, TLS1, TLS2,
+        'aliases'       => '(?:(?:DHE|DH[_-]ANON|DSS|RAS|STANDARD)[_-]|EXPORT_NONE?[_-]?XPORT|STRONG|UNENCRYPTED)',
+                           # various variants for aliases to select cipher groups
 
         # RegEx for matching various strings
         'compression'   =>'(?:DEFLATE|LZO)',    # if compression available
         'nocompression' =>'(?:NONE|NULL|^\s*$)',# if no compression available
         'encryption'    =>'(?:encryption|ecPublicKey)', # anything containing this string
         'encryption_ok' =>'(?:(?:(?:(?:md[245]|ripemd160|sha(?:1|224|256|384|512))with)?[rd]saencryption)|id-ecPublicKey)',
-                       # well known strings to identify signature and public key encryption
-                       # rsaencryption, dsaencryption, md[245]withrsaencryption,
-                       # ripemd160withrsa shaXXXwithrsaencryption
-                       # id-ecPublicKey
+                           # well known strings to identify signature and public
+                           # key encryption:
+                           # rsaencryption, dsaencryption, md[245]withrsaencryption,
+                           # ripemd160withrsa shaXXXwithrsaencryption
+                           # id-ecPublicKey
         'encryption_no' =>'(?:rsa(?:ssapss)?|sha1withrsa|dsawithsha1?|dsa_with_sha256)',
-                       # rsa, rsassapss, sha1withrsa, dsawithsha*, dsa_with_sha256
+                           # rsa, rsassapss, sha1withrsa, dsawithsha*, dsa_with_sha256
         'security'      => '(?:HIGH|MEDIUM|LOW|WEAK|NONE)',
-                       # well known "security" strings, should be used case-insensitive
+                           # well known "security" strings, should be used case-insensitive
         'isIP'          => '(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)',
         'isDNS'         => '(?:[a-z0-9.-]+)',
         'isIDN'         => '(?:xn--)',
@@ -2137,22 +3326,22 @@ our %cfg = (
         'invalidwild'   => '(?:\.\*\.)',            # no .*.
         'invalidIDN'    => '(?:xn--[a-z0-9-]*\*)',  # no * right of xn--
         'isSPDY3'       => '(?:spdy\/3)',           # match in protocols (NPN)
-                       # TODO: lazy match as it matches spdy/3.1 also
+                           # TODO: lazy match as it matches spdy/3.1 also
 
         # TODO: replace following RegEx by concrete list of constants
         # RegEx matching OWASP TLS Cipher String Cheat Sheet
             # matching list of concrete constants would be more accurate, but
             # that cannot be done with RegEx or ranges, unfortunatelly
-        'OWASP_A'   => '^(?:TLSv1[123]?)?(?:EC(?:DHE|EDH).*?(?:AES...[_-]GCM|CHACHA20-POLY1305)[_-]SHA)',
-        'OWASP_B'   => '^(?:TLSv1[123]?)?(?:(EC)?(?:DHE|EDH).*?(?:AES|CHACHA).*?(?!GCM|POLY1305)[_-]SHA)',
-        'OWASP_C'   => '^(?:TLSv1[123]?)?.*?(?:AES...|RSA)[_-]',
-        'OWASP_D'   => '(?:^SSLv[23]|(?:NULL|EXP(?:ORT)?(?:40|56|1024)|A(?:EC|NON[_-])?DH|DH(?:A|[_-]ANON)|ECDSA|DSS|CBC|DES|MD[456]|RC[24]))',
-        'OWASP_NA'  => '(?:ARIA|CAMELLIA|GOST|IDEA|SEED|CECPQ)',
+        'OWASP_A'       => '^(?:TLSv1[123]?)?(?:(EC)?(?:DHE|EDH).*?(?:AES...[_-]GCM|CHACHA20-POLY1305)[_-]SHA)',
+        'OWASP_B'       => '^(?:TLSv1[123]?)?(?:(EC)?(?:DHE|EDH).*?(?:AES|CHACHA).*?(?!GCM|POLY1305)[_-]SHA)',
+        'OWASP_C'       => '^(?:TLSv1[123]?)?.*?(?:AES...|RSA)[_-]',
+        'OWASP_D'       => '(?:^SSLv[23]|(?:NULL|EXP(?:ORT)?(?:40|56|1024)|A(?:EC|NON[_-])?DH|DH(?:A|[_-]ANON)|ECDSA|DSS|CBC|DES|MD[456]|RC[24]))',
+        'OWASP_NA'      => '(?:ARIA|CAMELLIA|ECDS[AS]|GOST|IDEA|SEED|CECPQ)',
         # TODO: need exception, i.e. TLSv1 and TLSv11
-        'notOWASP_A'=> '^(?:TLSv11?)',
-        'notOWASP_B'=> '',
-        'notOWASP_C'=> '',
-        'notOWASP_D'=> '',
+        'notOWASP_A    '=> '^(?:TLSv11?)',
+        'notOWASP_B'    => '',
+        'notOWASP_C'    => '',
+        'notOWASP_D'    => '',
 
         # RegEx containing pattern to identify vulnerable ciphers
             #
@@ -2246,9 +3435,10 @@ our %cfg = (
         'EV-empty'  => '^(?:n\/a|(?:in|not )valid)\s*$',    # empty string, or "invalid" or "not valid"
 
     }, # regex
-   #------------------+--------------------------------------------------------
+   #----------------------+----------------------------------------------------
+
     'hints' => {       # texts used for hints, SEE Note:hints
-	#   'key'   => "any string, may contain \t and \n",
+       #   'key'   => "any string, may contain \t and \n",
     }, # hints
    #------------------+--------------------------------------------------------
     'ourstr' => {
@@ -2263,7 +3453,7 @@ our %cfg = (
         'verbose'   => qr(^#[^[]),              # verbose output
         # matches somewhere in the line:
         'undef'     => qr(\<\<undef),           # see STR_UNDEF
-        'yeast'     => qr(\<\<.*?\>\>),         # additional informations
+        'yeast'     => qr(\<\<.*?\>\>),         # additional information
         'na'        => qr(N\/A),                # N/A
         'yes'       => qr(:\s*yes),             # good check result; # TODO: : needs to be $text{separator}
         'no'        => qr(:\s*no ),             # bad check result
@@ -2329,12 +3519,6 @@ our %cfg = (
            sha384WithRSAEncryption sha512WithRSAEncryption
         )
     ],
-    'openssl_option_map' => {   # map our internal option to openssl option; used our Net:SSL*
-        # will be initialized from %prot
-     },
-    'openssl_version_map' => {  # map our internal option to openssl version (hex value); used our Net:SSL*
-        # will be initialized from %prot
-     },
     'done'      => {},          # defined in caller
    #------------------+---------+----------------------------------------------
 ); # %cfg
@@ -2383,6 +3567,48 @@ our %dbx = (    # save hardcoded settings (command lists, texts), and debugging 
 
 =pod
 
+=head2 tls_text2key($text)
+
+Convert text to internal key: 0x00,0x26 -> 0x03000026
+
+=head2 tls_key2text($key)
+
+Convert internal key to text: 0x03000026 -> 0x00,0x26
+
+=head2 tls_const2text($constant_name)
+
+Convert TLS constant name to text (just replac _ by space).
+
+=cut
+
+sub tls_text2key        {
+    my $txt = shift;
+       $txt =~ s/(,|0x)//g;
+    if (4 < length($txt)) {
+       $txt = "0x02$txt";    # SSLv2
+    } else {
+       $txt = "0x0300$txt";  # SSLv3, TLSv1.x
+    }
+    return $txt;
+}
+
+sub tls_key2text        {
+    my $key = shift;
+    if ($key =~ m/^0x0300/) {
+       $key =~ s/0x0300//;      #   03000004 ->     0004
+    } else {
+       $key =~ s/^0x02//;       # 0x02030080 ->   030080
+    }
+       $key =~ s/(..)/,0x$1/g;  #       0001 -> ,0x00,0x04
+       $key =~ s/^,//;          # ,0x00,0x04 ->  0x00,0x04
+       $key =  "     $key" if (10 > length($key));
+    return "$key";
+}
+
+sub tls_const2text      {  my $c=shift; $c =~ s/_/ /g; return $c; }
+
+=pod
+
 =head2 get_cipher_suitename($cipher)
 
 =head2 get_cipher_suiteconst($cipher)
@@ -2413,41 +3639,8 @@ Get information from internal C<%cipher_names> data structure.
 
 Get information from internal C<%cipher> data structure.
 
-=head2 tls_text2key($text)
-
-=head2 tls_key2text($key)
-
-=head2 tls_const2text($constant_name)
-
 =cut
 
-sub tls_text2key        {
-    #? convert text to internal key: 0x00,0x26 -> 0x03000026
-    my $txt = shift;
-       $txt =~ s/(,|0x)//g;
-    if (4 < length($txt)) {
-       $txt = "0x02$txt";    # SSLv2
-    } else {
-       $txt = "0x0300$txt";  # SSLv3, TLSv1.x
-    }
-    return $txt;
-}
-
-sub tls_key2text        {
-    #? convert internal key to text: 0x03000026 -> 0x00,0x26
-    my $key = shift;
-    if ($key =~ m/^0x0300/) {
-       $key =~ s/0x0300//;      #   03000004 ->     0004
-    } else {
-       $key =~ s/^0x02//;       # 0x02030080 ->   030080
-    }
-       $key =~ s/(..)/,0x$1/g;  #       0001 -> ,0x00,0x04
-       $key =~ s/^,//;          # ,0x00,0x04 ->  0x00,0x04
-       $key =  "     $key" if (10 > length($key));
-    return "$key";
-}
-
-sub tls_const2text      {  my $c=shift; $c =~ s/_/ /g; return $c; }
 sub get_cipher_suitename { my $c=shift; return $cipher_names{$c}[0] if (defined $cipher_names{$c}[0]); return ""; }
 sub get_cipher_suiteconst{ my $c=shift; return $cipher_names{$c}[1] if (defined $cipher_names{$c}[1]); return ""; }
 sub get_cipher_suitealias{ my $c=shift; return $cipher_alias{$c}[0] if (defined $cipher_alias{$c}[0]); return ""; }
@@ -2636,7 +3829,7 @@ sub get_dh_paramter     {
         _trace1(" get_dh_paramter: keyExchange (DH or ECDH) = $keyExchange");
         # get length of 'dh_parameter' manually from '-msg' data if the
         # 'session cipher' uses a keyExchange with DHE and DH_anon
-        # (according RFC2246/RFC5246: sections 7.4.3)
+        # (according RFC 2246/RFC 5246: sections 7.4.3)
         $dh = Net::SSLhello::parseServerKeyExchange($keyExchange, $msgLen, $msgData);
     }
 
@@ -2686,9 +3879,9 @@ sub sort_cipher_names   {
     my @insecure = (
         qw((?:RC[24]))  ,               # all RC2 and RC4
         qw((?:CBC|DES)) ,               # all CBC, DES, 3DES
-        qw((?:DSS))     ,               # all DSS
+        qw((?:DSA|DSS)) ,               # all DSA, DSS
         qw((?:MD[2345])),               # all MD
-        qw(DH.?(?i:anon)) ,             # Anon needs to be caseless
+        qw(DH.?(?i:anon)),              # Anon needs to be caseless
         qw((?:NULL))    ,               # all NULL
         qw((?:SCSV))    ,               # dummy ciphers (avoids **WARNING: 412: for INFO_SCSV)
     );
@@ -2861,19 +4054,70 @@ sub set_target_stop  { my $i=shift; $cfg{'targets'}[$i][10] = shift; return; }
 sub set_target_error { my $i=shift; $cfg{'targets'}[$i][11] = shift; return; }
 
 
+=pod
+
+=head2 osaft::osaft_sleep($wait)
+
+Wrapper to simulate "sleep" with perl's select.
+
+=head2 osaft::printhint($cmd,@text)
+
+Print hint for specified command, additionl text will be appended.
+
+=head2 osaft::print_pod($file)
+
+Print POD for specified file, exits program.
+
+=cut
+
+sub osaft_sleep {
+    #? wrapper for IO::select
+    my $wait = shift;
+    select(undef, undef, undef, $wait); ## no critic qw(BuiltinFunctions::ProhibitSleepViaSelect)
+    return;
+} # osaft_sleep
+
+sub print_pod       {
+    #? print POD of specified file; exits program
+    my $file = shift;   # filename where to read POD from
+    my $pack = shift;   # package name
+    my $vers = shift;   # package version
+    printf("# %s %s\n", $pack, $vers);
+    if (eval {require Pod::Perldoc;}) {
+        # pod2usage( -verbose => 1 );
+        exit( Pod::Perldoc->run(args=>[$file]) );
+    }
+    if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
+            # may return:  You need to install the perl-doc package to use this program.
+            #exec "perldoc $0"; # scary ...
+        printf("# no Pod::Perldoc installed, please try:\n  perldoc $file\n");
+    }
+    exit 0;
+} # print_pod
+
+sub printhint   {   ## no critic qw(Subroutines::RequireArgUnpacking) # buggy perlcritic
+    #? Print hint for specified command.
+    my $cmd  = shift;
+    my @args = @_;
+    print STR_HINT, $cfg{'hints'}->{$cmd}, join(" ", @args) if (defined $cfg{'hints'}->{$cmd});
+    return;
+} # printhint
+
+
 #_____________________________________________________________________________
 #____________________________________________________ internal test methods __|
 
-sub __regex_head    { return sprintf("= %s\t%s\t%s\t%s\n", "PFS", "OWASP", "owasp", "cipher"); }
-sub __regex_line    { return "=------+-------+-------+---------------------------------------\n"; }
+sub __regex_head    { return sprintf("= %s\t%s\t%s\t%s", "PFS", "OWASP", "owasp", "cipher"); }
+sub __regex_line    { return "=------+-------+-------+---------------------------------------"; }
 
 sub test_cipher_regex   {
     #? check regex if cipher supports PFS, uses internal sub and not regex directly
+    local $\ = "\n";
     print "
 === test_cipher_regex: check RegEx for ciphers ===
 =
 = Check RegEx to detect ciphers, which support PFS using the internal function
-= ::_ispfs() .
+= ::_is_ssl_pfs() .
     \$cfg{'regex'}->{'PFS'}:      # match ciphers supporting PFS
       $cfg{'regex'}->{'PFS'}
 =
@@ -2894,7 +4138,7 @@ sub test_cipher_regex   {
     print __regex_head();
     print __regex_line();
     foreach my $cipher (sort keys %ciphers) {
-        my $is_pfs = (::_ispfs(get_cipher_ssl($cipher), $cipher) eq "") ? "yes" : "no";
+        my $is_pfs = (::_is_ssl_pfs(get_cipher_ssl($cipher), $cipher) eq "") ? "no" : "yes";
         my @o = ('', '', '', '', '');
         # following sequence of check should be the same as in get_cipher_owasp()
         $o[4] = "-?-" if ($cipher =~ /$cfg{'regex'}->{'OWASP_NA'}/);
@@ -2915,14 +4159,13 @@ sub test_cipher_regex   {
 =   miss  cipher not matched by any RegEx, programming error
 = owasp values:
 =   xx    list of all matching OWASP_x RegEx
-
 ";
     return;
 } # test_cipher_regex
 
 sub test_cipher_sort    {
     #? check sorting cipher according strength
-    # see ../o-saft-dbx.pm  _yeast_ciphers_sorted()
+    # TODO: see ../o-saft-dbx.pm  _yeast_ciphers_sorted()
     return;
 } # test_cipher_sort
 
@@ -2945,7 +4188,7 @@ sub test_regex          {
 #_________________________________________________________ internal methods __|
 
 sub _prot_init_value    {
-    #? initialize default values in %prot
+    #? initialise default values in %prot
     foreach my $ssl (keys %prot) {
         $prot{$ssl}->{'cnt'}            = 0;
         $prot{$ssl}->{'-?-'}            = 0;
@@ -2970,14 +4213,14 @@ sub _prot_init_value    {
 } # _prot_init_value
 
 sub _cfg_init   {
-    # initialize targets with entry containing defaults
+    #? initialise dynamic settings in %cfg, copy data from %prot
+    # initialise targets with entry containing defaults
     push(@{$cfg{'targets'}}, @target_defaults);
-    #? initialize dynamic settings in %cfg, copy data from %prot
-    $cfg{'openssl_option_map'}->{$_}  = $prot{$_}->{'opt'} foreach (keys %prot);
+    $cfg{'openssl_option_map'} ->{$_} = $prot{$_}->{'opt'} foreach (keys %prot);
     $cfg{'openssl_version_map'}->{$_} = $prot{$_}->{'hex'} foreach (keys %prot);
     $cfg{'protos_alpn'} = [split(/,/, $cfg{'protos_next'})];
     $cfg{'protos_npn'}  = [split(/,/, $cfg{'protos_next'})];
-    # initialize alternate protocols and curves for cipher checks
+    # initialise alternate protocols and curves for cipher checks
     $cfg{'cipher_alpns'}= [split(/,/, $cfg{'protos_next'})];
     $cfg{'cipher_npns'} = [split(/,/, $cfg{'protos_next'})];
     $cfg{'ciphercurves'}= [
@@ -2997,12 +4240,11 @@ sub _cfg_init   {
     $cfg{'openssl_env'} = $ENV{'OPENSSL'}      if (defined $ENV{'OPENSSL'});
     $cfg{'openssl_cnf'} = $ENV{'OPENSSL_CONF'} if (defined $ENV{'OPENSSL_CONF'});
     $cfg{'openssl_fips'}= $ENV{'OPENSSL_FIPS'} if (defined $ENV{'OPENSSL_FIPS'});
-
     return;
 } # _cfg_init
 
 sub _cmd_init   {
-    #? initialize dynamic settings in %cfg for commands
+    #? initialise dynamic settings in %cfg for commands
     foreach my $key (sort keys %cfg) {  # well-known "summary" commands
         push(@{$cfg{'commands_cmd'}}, $key) if ($key =~ m/^cmd-/);
     }
@@ -3010,7 +4252,7 @@ sub _cmd_init   {
 } # _cmd_init
 
 sub _dbx_init   {
-    #? initialize settings for debugging
+    #? initialise settings for debugging
     $dbx{'cmd-check'} = $cfg{'cmd-check'};
     $dbx{'cmd-http'}  = $cfg{'cmd-http'};
     $dbx{'cmd-info'}  = $cfg{'cmd-info'};
@@ -3020,7 +4262,7 @@ sub _dbx_init   {
 } # _dbx_init
 
 sub _osaft_init {
-    #? additional generic initializations for data structures
+    #? additional generic initialisations for data structures
     my $me =  $0;       # done here to instead of package's "main" to avoid
        $me =~ s#.*[/\\]##;  # multiple variable definitions of $me
     $cfg{'me'}      = $me;
@@ -3029,65 +4271,24 @@ sub _osaft_init {
     $cfg{'ARGV'}    = [@ARGV];
     $cfg{'prefix_trace'}    = "#${me}::";
     $cfg{'prefix_verbose'}  = "#${me}: ";
-
-    _prot_init_value(); # initallize WEAK, LOW, MEDIUM, HIGH, default, pfs, protocol
-    _cfg_init();        # initallize dynamic data in %cfg
-    _cmd_init();        # initallize dynamic commands in %cfg
-    _dbx_init();        # initallize debugging data in %dbx
+    _prot_init_value(); # initallise WEAK, LOW, MEDIUM, HIGH, default, pfs, protocol
+    _cfg_init();        # initallise dynamic data in %cfg
+    _cmd_init();        # initallise dynamic commands in %cfg
+    _dbx_init();        # initallise debugging data in %dbx
     foreach my $k (keys %data_oid) {
         $data_oid{$k}->{val} = "<<check error>>"; # set a default value
     }
     return;
 } # _osaft_init
 
-
-=pod
-
-=head2 osaft::printhint($cmd,@text)
-
-Print hint for specified command, additionl text will be appended.
-
-=head2 osaft::osaft_sleep($wait)
-
-Wrapper to simulate "slee" with perl's select.
-=cut
-
-sub printhint   {   ## no critic qw(Subroutines::RequireArgUnpacking) # buggy perlcritic
-    #? Print hint for specified command.
-    my $cmd  = shift;
-    my @args = @_;
-    print STR_HINT, $cfg{'hints'}->{$cmd}, join(" ", @args) if (defined $cfg{'hints'}->{$cmd});
-    return;
-} # printhint
-
-sub osaft_sleep {
-    #? wrapper for IO::select
-    my $wait = shift;
-    select(undef, undef, undef, $wait); ## no critic qw(BuiltinFunctions::ProhibitSleepViaSelect)
-    return;
-} # osaft_sleep
-
-sub _main_help      {
-    #? print own help
-    printf("# %s %s\n", __PACKAGE__, $VERSION);
-    if (eval {require POD::Perldoc;}) {
-        # pod2usage( -verbose => 1 );
-        exec( Pod::Perldoc->run(args=>[$0]) );
-    }
-    if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
-        printf("# no POD::Perldoc installed, please try:\n  perldoc $0\n");
-    }
-    exit 0;
-} # _main_help
-
-sub _main           {
+sub _main_lib       {
     my @argv = @_;
     push(@argv, "--help") if (0 > $#argv);
     binmode(STDOUT, ":unix:utf8");
     binmode(STDERR, ":unix:utf8");
     # got arguments, do something special
     while (my $arg = shift @argv) {
-        _main_help()        if ($arg =~ m/^--?h(?:elp)?$/);
+        print_pod($0, __PACKAGE__, SID_osaft)   if ($arg =~ m/^--?h(?:elp)?$/); # print own help# print own help
         if ($arg =~ m/^--(?:test[_.-]?)regex/) {
             $arg = "--test-regex";
             printf("#$0: direct testing not yet possible, please try:\n   o-saft.pl $arg\n");
@@ -3095,11 +4296,11 @@ sub _main           {
         }
     }
     exit 0;
-} # _main
+} # _main_lib
 
 sub osaft_done  {};         # dummy to check successful include
 
-_osaft_init();          # complete initializations
+_osaft_init();          # complete initialisations
 
 ## PACKAGE }
 
@@ -3108,19 +4309,13 @@ _osaft_init();          # complete initializations
 
 =pod
 
-=head1 NOTES
-
-It's often recommended not to export constants and variables from modules, see
-for example  http://perldoc.perl.org/Exporter.html#Good-Practices . The main
-purpose of this module is defining variables. Hence we export them.
-
 =head1 SEE ALSO
 
 # ...
 
 =head1 VERSION
 
-1.199 2019/12/04
+1.251 2021/04/14
 
 =head1 AUTHOR
 
@@ -3141,7 +4336,7 @@ sub _trace2     { ::_trace(@_); return; }   ## no critic qw(Subroutines::Require
 sub _trace3     { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
 sub _warn       { ::_warn(@_);  return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
 
-_main(@ARGV) if (not defined caller);
+_main_lib(@ARGV) if (not defined caller);
 
 1;
 

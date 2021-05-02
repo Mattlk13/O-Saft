@@ -51,7 +51,7 @@
 #          * rename ALL.tests and ALL.tests.log (too similar to ALL.test)
 #
 #? VERSION
-#?      @(#) Makefile 1.100 19/12/03 09:21:32
+#?      @(#) Makefile 1.114 21/01/15 00:19:58
 #?
 #? AUTHOR
 #?      18-apr-18 Achim Hoffmann
@@ -60,7 +60,7 @@
 
 HELP-help.test.test = general testing targets
 
-_SID.test          := 1.100
+_SID.test          := 1.114
 
 _MYSELF.test       := t/Makefile
 ALL.includes       += $(_MYSELF.test)
@@ -91,7 +91,7 @@ help.test.%:          HELP_HEAD = $(HELP_RULE)
 #________________________________________________________________ variables __|
 
 # store -n (dry-run) option in own variable
-_n := $(if $(findstring n,$(firstword -$(MAKEFLAGS))),-n)
+TEST.make-n    := $(if $(findstring n,$(firstword -$(MAKEFLAGS))),-n)
 
 # test tools (part of distribution)
 TEST.dir       := t
@@ -133,6 +133,15 @@ TRACE.target.log=
 
 TEST.today     := $(shell date +%Y""%m%d)
     # current date in ISO format
+
+_SORT_opt      := -n -f
+    # newer GNU sort (~2018) changed the default behaviour, for example
+    # case-sensitivity, these options do the traditional sort
+    # TODO: need to check first if sort supports these options
+
+_PERLDOC_opt   := -n nroff
+    # newer perldoc prints with plain text format by default
+    # -n nroff enforced the traditional behaviour with ASCII-escapes
 
 # define script or parts of it as variables, for better human readability
 # SEE Make:target matching
@@ -201,11 +210,26 @@ help.test.test-v-v: _help_list
 #_____________________________________________________________________________
 #____________________________________________ target for help in t/Makefile*__|
 
+HELP-help.test.test.all     = print available targets for tests from all Makefiles
+HELP-help.test.test.alls    = print available targets for tests one per line
+#HELP-help.test.test.all-n   = show command for all available test targets
 HELP-help.test.*.all        = print available individual targets for tests from Makefile.*
+
+# experimental: some targets print too many shell commands
+help.test.test.all-n:
+	@$(TRACE.target)
+	@$(MAKE) -n $(ALL.tests)
+
+help.test.test.alls:
+	@$(TRACE.target)
+	@echo " # $(words $(ALL.tests)) targets for tests:"
+	@echo $(ALL.tests) | $(EXE.wordperline) | sort $(_SORT_opt)
+	@echo ""
+
 help.test.%.all:
 	@$(TRACE.target)
 	@echo " # individual targets for testing $* :"
-	@echo $(ALL.test.$*) | $(EXE.wordperline) | sort
+	@echo $(ALL.test.$*) | $(EXE.wordperline) | sort $(_SORT_opt)
 	@echo ""
 	@echo "$(HELP.test.$*.all)"
 
@@ -252,6 +276,7 @@ help.test.internal: test.file-1 test,file-2 test_file-3
 	@echo '# $$(_SID.cipher)   = $(_SID.cipher)'
 	@echo '# $$(_SID.make)     = $(_SID.make)'
 	@echo '# $$(_SID.exit)     = $(_SID.exit)'
+	@echo '# $$(_SID.init)     = $(_SID.init)'
 	@echo '# $$(_SID.misc)     = $(_SID.misc)'
 	@echo '# $$(_SID.cmd)      = $(_SID.cmd)'
 	@echo '# $$(_SID.dev)      = $(_SID.dev)'
@@ -263,13 +288,14 @@ help.test.internal: test.file-1 test,file-2 test_file-3
 	@echo '# $$(_SID.opt)      = $(_SID.opt)'
 	@echo '# $$(_SID.pod)      = $(_SID.pod)'
 	@echo '# $$(_SID.tcl)      = $(_SID.tcl)'
+	@echo '# $$(_SID.docker)   = $(_SID.docker)'
 	@echo '# $$(_SID.legacy)   = $(_SID.legacy)'
 	@echo '# $$(_SID.template) = $(_SID.template)'
 	@echo '# show some private make variables:'
 	@echo '# $$(PWD)           = $(PWD)'
 	@echo '# $$(PWD.dir)       = $(notdir $(PWD))'
-	@echo '# $$(ALL.includes) = $(ALL.includes)'
-	@echo '# $$(ALL.inc.type) = $(ALL.inc.type)'
+	@echo '# $$(ALL.includes)  = $(ALL.includes)'
+	@echo '# $$(ALL.inc.type)  = $(ALL.inc.type)'
 	@echo '# $$(TEST.dir)      = $(TEST.dir)'
 	@echo '# $$(TEST.logdir)   = $(TEST.logdir)'
 	@echo '# $$(TEST.host)     = $(TEST.host)'
@@ -324,7 +350,7 @@ help.test.internal: test.file-1 test,file-2 test_file-3
 
 help.test.makevars:
 	@echo '# $$(.VARIABLES)    = '
-	@echo '$(.VARIABLES)' | $(EXE.wordperline) | sort
+	@echo '$(.VARIABLES)' | $(EXE.wordperline) | sort $(_SORT_opt)
 
 .PHONY: help.test.makevars
 
@@ -418,8 +444,8 @@ message-%:
 	@-if expr "$(TEST.args)" ":" "^TODO" >/dev/null ; then \
 	    echo "$@:    $(TEST.args)"; \
 	else \
-	    echo "$(EXE.pl) $(TEST.init) $(TEST.args) 2>&1 | grep $(TEST.opt.grep) $* " ; \
 	    echo "$(TEST.rc)" > $(TEST.tmp.rc) ; \
+	    echo "cd $(TEST.dir) && $(EXE.pl) $(TEST.init) $(TEST.args) 2>&1 | grep $(TEST.opt.grep) $* " ; \
 	    cd $(TEST.dir) && $(EXE.pl) $(TEST.init) $(TEST.args) 2>&1 | grep $(TEST.opt.grep) $* ; \
 	    _status=$$? ; \
 	    rm -f $(TEST.tmp.rc) ; \
@@ -433,7 +459,7 @@ message-%:
 no.message-%:
 	@$(TRACE.target)
 	@echo "$(TEST.rc)" > $(TEST.tmp.rc)
-	$(EXE.pl) $(TEST.init) $(TEST.args) 2>&1 | awk '/ $*/{exit 1}'
+	cd $(TEST.dir) && $(EXE.pl) $(TEST.init) $(TEST.args) 2>&1 | awk '/ $*/{exit 1}'
 	@rm -f $(TEST.tmp.rc)
 
 # Simple target to calL: $(EXE.pl) $(TEST.init) $(TEST.args)
@@ -651,12 +677,20 @@ ifeq (,$(_SID.dev))
     -include t/Makefile.dev
 endif
 
+ifeq (,$(_SID.init))
+    -include t/Makefile.init
+endif
+
 ifeq (,$(_SID.misc))
     -include t/Makefile.misc
 endif
 
 ifeq (,$(_SID.critic))
     -include t/Makefile.critic
+endif
+
+ifeq (,$(_SID.docker))
+    -include t/Makefile.docker
 endif
 
 ifeq (,$(_SID.legacy))
@@ -677,10 +711,13 @@ HELP-tests.log  = same as tests but store results in '$(TEST.logdir)/'
 HELP-tests.quick    = like tests, but less targets (for development)
 HELP-tests.quick.log= like tests.log, but less targets (for development)
 HELP-help.test.all  = print available individual targets for testing
+HELP-test.log.ls    = list files in '$(TEST.logdir)/' generated by test.log
+HELP-test.%.log.ls  = list files in '$(TEST.logdir)/' generated by test.EXT.log
 
 tests: TRACE.target = echo "\\012\#\# $@: $(EXE.pl) $(TEST.args)"
 tests:      $(ALL.tests)
 	@$(TRACE.target)
+	@$(MAKE) $(MFLAGS) -s $(ALL.tests)
 
 tests.log:  $(ALL.tests.log) test.log-compare-hint
 	@$(TRACE.target)
@@ -693,6 +730,10 @@ test.log-compare:       TEST.target_prefix  = test
 test.log-move:          TEST.target_prefix  = test
 
 # quick tests for development
+# the target is named tests.quick instead of test.quick to avoid future naming
+# conficts (if there is a Makefile.quick);
+# unfortunately the targets test*s.quick.log*  must then be explicitly defined
+# because the pattern rules  test.%.log* do not match
 tests.quick:
 	@$(MAKE) $(MFLAGS) -s tests     ALL.test.ext= ALL.test.misc= ALL.test.critic=
 #tests.quick.log:
@@ -702,12 +743,32 @@ tests.quick.log:
 	@$(TRACE.target)
 	@$(TRACE.target.log)
 	$(MAKE) $(MFLAGS) -s tests.log ALL.tests.log="test.warnings.log test.cmd.log test.exit.log test.opt.log test.cgi.log test.tcl.log"
+	@-$(_CMD_log-compare-hint)
+
+tests.quick.log-compare:
+	@$(TRACE.target)
+	@-$(_CMD_log-compare)
+	@-$(_CMD_log-move-hint)
+	@echo "# 12 logfiles with differences could be expected."
+
+tests.quick.log-move:
+	@$(TRACE.target)
+	$(_CMD_log-move)
 
 # aliases for convenience
 test:       tests
 test.log:   tests.log
 	@$(TRACE.target)
-	@echo "# to show differences with $(EXE.diff), use: $(MAKE_COMMAND) $@-compare"
+	@echo "# to show differences with $(EXE.diff), use:"
+	@echo "    $(MAKE_COMMAND) $@-compare"
+
+test.log.ls:
+	@$(TRACE.target)
+	@-ls $(TEST.logdir)/test.*log
+
+test.%.log.ls:
+	@$(TRACE.target)
+	@-ls -l $(TEST.logdir)/test*-$(*)*log
 
 
 # collect targets in this file, should not be added to ALL.tests
@@ -752,7 +813,7 @@ $(_NL)\
 help.test.log-info:
 	@echo "$(HELP.test.log-info)"
 
-# TODO: need a usable way to change diff program
+# need a usable way to change diff program; EXE.diff may be set on command-line
 EXE.log-diff       := diff
 EXE.log-xxdiff     := xxdiff --geometry 1600x1000
 EXE.log-mgdiff     := mgdiff
@@ -760,6 +821,9 @@ EXE.log-tkdiff     := tkdiff
 EXE.diffs          := diff xxdiff mgdiff tkdiff
 EXE.diff           := tkdiff
 EXE.log-diff        = $(EXE.log-tkdiff)
+
+# summary variables (mainly used for INSTALL.sh)
+_ALL.devtools.extern   += $(EXE.diffs)
 
 # default prefix, may be redifined per target
 TEST.target_prefix  = testcmd-
@@ -772,10 +836,9 @@ TEST.log-suffix     = -$(TEST.today)
 # checking this variable if not empty is sufficent to print verbose information
 # SEE Make:defines with commands
 
-_HELP_log_hint  = \# see also: $(MAKE_COMMAND) help.test.log-info
-
 define _CMD_log-compare
 	cd $(TEST.logdir) && \
+	echo "# compare "`ls $(TEST.target_prefix)*.log$(TEST.log-suffix) | wc -l`" file ..." && \
 	for f in $(TEST.target_prefix)*.log; do \
 	    [ -f $${f}$(TEST.log-suffix) ] || continue ; \
 	    [ -n '$(TRACE.target)' ] && echo "# $(TEST.logdir)/$${f} ..." ; \
@@ -785,8 +848,11 @@ endef
 
 define _CMD_log-compare-hint
 	echo ""
-	echo "# to show differences with $(EXE.diff), use: $(MAKE_COMMAND) $(MAKECMDGOALS)-compare"
-	echo "$(_HELP_log_hint)"
+	echo "# for informations and to show differences with $(EXE.diff), use:"
+	echo "    $(MAKE_COMMAND) help.test.log-info"
+	echo "    $(MAKE_COMMAND) $(MAKECMDGOALS)-compare"
+	echo "    $(MAKE_COMMAND) $(MAKECMDGOALS)-compare-v"
+	echo "    $(MAKE_COMMAND) $(MAKECMDGOALS)-compare TEST.log-suffix=$(TEST.log-suffix)"
 endef
 
 define _CMD_log-move
@@ -798,12 +864,16 @@ define _CMD_log-move
 	done
 endef
 
+# FIXME: does not set _stub properly if $* is set
 define _CMD_log-move-hint
-	_stub="log" && \
-	[ -n "$*" ] && _stub="$*.log" ; \
-	echo ""     && \
-	echo "# to move new files to .log , use: $(MAKE_COMMAND) test.$$_stub-move"
-	echo "$(_HELP_log_hint)"
+	_stub="log"
+	$(eval _stub="log")
+	$(eval $(shell [ -n "$*" ] && _stub="$*.log" ))
+	echo ""
+	echo "# for informations and to move new files to .log , use:"
+	echo "    $(MAKE_COMMAND) help.test.log-info"
+	echo "    $(MAKE_COMMAND) test.$(_stub)-move"
+	echo "    $(MAKE_COMMAND) test.$(_stub)-move TEST.log-suffix=$(TEST.log-suffix)"
 endef
 
 test.log-compare-hint:

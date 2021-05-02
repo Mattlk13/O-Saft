@@ -1,5 +1,5 @@
 
-# SID   @(#) tools.txt 1.6 19/09/11 23:46:35
+# SID   @(#) tools.txt 1.8 21/02/27 19:41:25
 
 NAME
 
@@ -27,6 +27,8 @@ SYNOPSIS
 
         https://o-saft.cgi?--cgi&OPTIONS&COMMANDS&target
 
+        checkAllCiphers.pl
+
         INSTALL.sh
 
         contrib/install_openssl.sh
@@ -49,7 +51,7 @@ CONCEPTS
         All other tools described here are just wrappers around  o-saft.pl or
         tools for postprocessing output data of  o-saft.pl .
 
-        These tools can be categorized as follows:
+        These tools can be categorised as follows:
 
            category       tools            purpose
          #---------------+----------------+----------------------------------
@@ -58,6 +60,7 @@ CONCEPTS
           GUI             o-saft.tcl      # use o-saft.pl from GUI
           CGI             o-saft.cgi      # use o-saft.pl from web server
           VM              o-saft-docker   # use o-saft.pl inside docker
+          CLI             checkAllCiphers.pl    # simple quick cipher check
           Postprocess     contrib/*       # prostprocessor tools
           Advanced Tools  contrib/*       # use o-saft.pl in advanced modes
           Installation    INSTALL.sh      # simple installation tool
@@ -89,6 +92,10 @@ TOOLS
           o-saft [COMMANDS] [OPTIONS] target
           o-saft [COMMANDS] [OPTIONS] target -post='bunt.pl'
           o-saft-docker -id=osawp/o-saft -post='bunt.pl' ' [COMMANDS] [OPTIONS] target
+
+    Simple check for ciphers
+
+          checkAllCiphers.pl target
 
     GUI
         o-saft.tcl is the graphical user interface for  o-saft.pl .
@@ -128,9 +135,14 @@ TOOLS
           contrib/*.awk
           contrib/* TBD
 
-        The are used in general like:
+        They are used in general like:
 
           o-saft.pl ... target | contrib/.....
+
+        Formatting quick cipher check:
+
+          checkAllCiphers.pl target > target-alerts.csv
+          contrib/alertscript.pl --csv=target-alerts.csv
 
     Advanced Tools
         Check a target for ciphers with various methods:
@@ -160,13 +172,13 @@ TOOLS
 
         Other files for development are:
           o-saft-docker-dev
-          t/.perlcritic
+          t/.perlcriticrc
           contrib/critic.sh
 
 
-CUSTOMIZATION
+CUSTOMISATION
 
-        The tools can be customized with following files:
+        The tools can be customised with following files:
 
         * o-saft.pl
            .o-saft.pl

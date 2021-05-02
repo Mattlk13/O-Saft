@@ -1,42 +1,21 @@
 #!/usr/bin/perl
 ## PACKAGE {
 
-#!# Copyright (c) 2019 Achim Hoffmann, sic[!]sec GmbH
+#!# Copyright (c) 2021 Achim Hoffmann
 #!# This  software is licensed under GPLv2. Please see o-saft.pl for details.
 
-## no critic qw(Documentation::RequirePodSections)
-#  our POD below is fine, perlcritic (severity 2) is too pedantic here.
+package main;   # ensure that main:: variables are used, if not defined herein
 
 # HACKER's INFO
 #       Following (internal) functions from o-saft.pl are used:
-#       _is_do()
-#       _is_intern()
+#       _is_cfg_do()
+#       _is_cfg_intern()
 #       _is_member()
 #       _need_cipher()
 #       _get_ciphers_range()
 
-## no critic qw(TestingAndDebugging::RequireUseStrict)
-#  `use strict;' not usefull here, as we mainly use our global variables
-use warnings;
-
-my  $SID_dbx= "@(#) o-saft-dbx.pm 1.108 19/12/05 07:56:19";
-
-package main;   # ensure that main:: variables are used, if not defined herein
-
-no warnings 'redefine'; ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
-   # must be herein, as most subroutines are already defined in main
-   # warnings pragma is local to this file!
-no warnings 'once';     ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
-   # "... used only once: possible typo ..." appears when called as main only
-
 ## no critic qw(Subroutines::RequireArgUnpacking)
 #        Parameters are ok for trace output.
-
-## no critic qw(ValuesAndExpressions::ProhibitNoisyQuotes)
-#        We have a lot of single character strings, herein, that's ok.
-
-## no critic qw(ValuesAndExpressions::ProhibitMagicNumbers)
-#        We have some constants herein, that's ok.
 
 ## no critic qw(Subroutines::ProhibitUnusedPrivateSubroutines)
 #        That's intended.
@@ -47,6 +26,35 @@ no warnings 'once';     ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
 ## no critic qw(RegularExpressions::RequireExtendedFormatting)
 #        We believe that most RegEx are not too complex.
 
+# for Severity 2 only:
+## no critic qw(ValuesAndExpressions::ProhibitMagicNumbers)
+#        We have some constants herein, that's ok.
+
+## no critic qw(ValuesAndExpressions::ProhibitNoisyQuotes)
+#        We have a lot of single character strings, herein, that's ok.
+
+## no critic qw(TestingAndDebugging::RequireUseStrict)
+#  `use strict;' not useful here, as we mainly use our global variables
+use warnings;
+
+no warnings 'redefine'; ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
+   # must be herein, as most subroutines are already defined in main
+   # warnings pragma is local to this file!
+no warnings 'once';     ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
+   # "... used only once: possible typo ..." appears when called as main only
+
+BEGIN { # mainly required for testing ...
+    # SEE Perl:BEGIN perlcritic
+    my $_path = $0;     $_path =~ s#[/\\][^/\\]*$##;
+    unshift(@INC, ".",  $_path);
+}
+
+use osaft qw(print_pod);
+
+my  $SID_dbx= "@(#) o-saft-dbx.pm 1.154 21/02/16 12:24:42";
+
+#_____________________________________________________________________________
+#__________________________________________________________ debug functions __|
 # debug functions
 sub _yTIME      {
     if (0 >= $cfg{'traceTIME'}) { return ""; }
@@ -54,52 +62,63 @@ sub _yTIME      {
        $now = time() if (1 == $cfg{'time_absolut'});# $time0 defined in main
     return sprintf(" %02s:%02s:%02s", (localtime($now))[2,1,0]);
 }
-sub _yeast      { local $\ = "\n"; print $cfg{'prefix_verbose'} . $_[0]; return; }
-sub _y_ARG      { local $\ = "\n"; print $cfg{'prefix_verbose'} . " ARG: " . join(" ", @_) if (0 < $cfg{'traceARG'}); return; }
-sub _y_CMD      { local $\ = "\n"; print $cfg{'prefix_verbose'} . _yTIME() . " CMD: " . join(" ", @_) if (0 < $cfg{'traceCMD'}); return; }
-sub _yTRAC      { local $\ = "\n"; printf("%s%14s= %s\n",  $cfg{'prefix_verbose'}, $_[0], $_[1]); return; }
-sub _y_ARR      { return join(" ", "[", @_, "]"); }
-sub _yline      { _yeast("#----------------------------------------------------" . $_[0]); return; }
-sub _ynull      { _yeast("value <<null>> means that internal variable is not defined @_"); return; }
-sub _yeast_trac {}          # forward declaration
-sub _yeast_trac {
-    #? print variable according its type, undertands: CODE, SCALAR, ARRAY, HASH
+sub __yeast     { return $cfg{'prefix_verbose'} . $_[0]; }
+sub ___ARG      { return $cfg{'prefix_verbose'} .            " ARG: " . join(" ", @_);  }
+sub ___CMD      { return $cfg{'prefix_verbose'} . _yTIME() . " CMD: " . join(" ", @_);  }
+sub __line      { return "#----------------------------------------------------" . $_[0]; }
+sub ___ARR      { return join(" ", "[", sort(@_), "]"); }
+sub __INIT      { return sprintf("%s%21s= %s", $cfg{'prefix_verbose'}, $_[0], $_[1]);   }
+sub __TRAC      { return sprintf("%s%14s= %s", $cfg{'prefix_verbose'}, $_[0], $_[1]);   }
+sub _y_ARG      { local $\ = "\n"; print ___ARG(@_) if (0 < $cfg{'traceARG'}); return;  }
+sub _y_CMD      { local $\ = "\n"; print ___CMD(@_) if (0 < $cfg{'traceCMD'}); return;  }
+sub _yeast      { local $\ = "\n"; print __yeast($_[0]);return; }
+sub _yINIT      { local $\ = "\n"; print __INIT(@_);    return; }
+sub _yTRAC      { local $\ = "\n"; print __TRAC(@_);    return; }
+sub _yline      { _yeast(__line($_[0]));                return; }
+sub _ynull      { _yeast("value <<undef>> means that internal variable is not defined @_"); return; }
+sub __trac      {}          # forward declaration
+sub __trac      {
+    #? print variable according its type, understands: CODE, SCALAR, ARRAY, HASH
     my $ref  = shift;   # must be a hash reference
     my $key  = shift;
+    my $data = "";
     if (not defined $ref->{$key}) {
         # undef is special, avoid perl warnings
-        _yTRAC($key, "<<null>>");
-        return;
+        return __TRAC($key, "<<undef>>");
     }
     SWITCH: for (ref($ref->{$key})) {   # ugly but save use of $_ here
-        /^$/    && do { _yTRAC($key, $ref->{$key}); last SWITCH; }; ## no critic qw(RegularExpressions::ProhibitFixedStringMatches)
-        /CODE/  && do { _yTRAC($key, "<<code>>");   last SWITCH; };
-        /SCALAR/&& do { _yTRAC($key, $ref->{$key}); last SWITCH; };
-        /ARRAY/ && do { _yTRAC($key, _y_ARR(@{$ref->{$key}})); last SWITCH; };
+        /^$/    && do { $data .= __TRAC($key, $ref->{$key}); last SWITCH; };
+        /CODE/  && do { $data .= __TRAC($key, "<<code>>");   last SWITCH; };
+        /SCALAR/&& do { $data .= __TRAC($key, $ref->{$key}); last SWITCH; };
+        /ARRAY/ && do { $data .= __TRAC($key, ___ARR(@{$ref->{$key}})); last SWITCH; };
         /HASH/  && do { last SWITCH if (2 >= $ref->{'trace'});      # print hashes for full trace only
-                        _yeast("# - - - - HASH: $key = {");
+                        $data .= __yeast("# - - - - HASH: $key = {");
                         foreach my $k (sort keys %{$ref->{$key}}) {
-                            #_yeast_trac($ref, ${$ref->{$key}}{$k}); # FIXME:
-                            _yTRAC("    ".$key."->".$k, join("-", ${$ref->{$key}}{$k})); # TODO: fast ok
+                            #__trac($ref, ${$ref->{$key}}{$k}); # FIXME:
+                            $data .= __TRAC("    ".$key."->".$k, join("-", ${$ref->{$key}}{$k})); # TODO: output needs to be improved
                         };
-                        _yeast("# - - - - HASH: $key }");
+                        $data .= __yeast("# - - - - HASH: $key }");
                         last SWITCH;
-                    };
+                      };
         # DEFAULT
-                        _yeast(STR_WARN . " user defined type '$_' skipped");
+                        $data .= __yeast(STR_WARN . " user defined type '$_' skipped");
     } # SWITCH
 
-    return;
-} # _yeast_trac
+    return $data;
+} # __trac
+
+sub _yeast_trac { local $\ = "\n"; my $d = __trac(@_); print $d if ($d !~ m/^\s*$/); return; }
+    #? print variable according its type, understands: CODE, SCALAR, ARRAY, HASH
+    #  avoids printing of empty lines
 
 sub _yeast_ciphers_list     { # TODO: obsolete when ciphers defined in OSaft/Cipher.pm
-    #? print ciphers fromc %cfg (output optimized for +cipher and +cipherraw)
+    #? print ciphers fromc %cfg (output optimised for +cipher and +cipherraw)
     return if (0 >= ($cfg{'trace'} + $cfg{'verbose'}));
     _yline(" ciphers {");
     my $_cnt = scalar @{$cfg{'ciphers'}};
     my $need = _need_cipher();
     my $ciphers = "@{$cfg{'ciphers'}}";
-    if (_is_do('cipherraw')) {
+    if (_is_cfg_do('cipherraw')) {
        $need = 1;
        my @range = $cfg{'cipherranges'}->{$cfg{'cipherrange'}};
        if ($cfg{'cipherrange'} =~ m/(full|huge|safe)/i) {
@@ -121,7 +140,7 @@ sub _yeast_ciphers_list     { # TODO: obsolete when ciphers defined in OSaft/Cip
     if (0 < $need) {
         $_cnt = sprintf("%5s", $_cnt);  # format count
         _yeast("      starttls= " . $cfg{'starttls'});
-        _yeast("   cipherrange= " . $cfg{'cipherrange'});   # used only if (_is_do('cipherraw')) {
+        _yeast("   cipherrange= " . $cfg{'cipherrange'});   # used only if (_is_cfg_do('cipherraw')) {
         _yeast(" cipherpattern= " . $cfg{'cipherpattern'});
         _yeast("use cipher from openssl= " . $cmd{'extciphers'});
         _yeast(" $_cnt ciphers= $ciphers");
@@ -131,22 +150,21 @@ sub _yeast_ciphers_list     { # TODO: obsolete when ciphers defined in OSaft/Cip
 } # _yeast_ciphers_list
 
 sub _yeast_ciphers_sorted   { # TODO: obsolete when ciphers defined in OSaft/Cipher.pm
-    ## no critic qw(CodeLayout::ProhibitHardTabs); TABs are intended
+    local $\ = "\n";
     printf("#%s:\n", (caller(0))[3]);
     print "
 === ciphers sorted according strength ===
 =
-= OWASP	openssl	cipher
-=------+-------+----------------------------------------------
-";
+= OWASP openssl cipher
+=------+-------+----------------------------------------------";
     my @sorted;
     # TODO: sorting as in yeast.pl _sort_results()
     foreach my $c (sort_cipher_names(keys %ciphers)) {
-        push(@sorted, sprintf("%2s\t%s\t%s\n", get_cipher_owasp($c), get_cipher_sec($c), $c));
+        push(@sorted, sprintf("%2s\t%s\t%s", get_cipher_owasp($c), get_cipher_sec($c), $c));
     }
     print foreach sort @sorted;
-    print "=------+-------+----------------------------------------------\n";
-    print "= OWASP openssl cipher\n";
+    print "=------+-------+----------------------------------------------";
+    print "= OWASP openssl cipher";
     return;
 } # _yeast_ciphers_sorted
 
@@ -155,8 +173,8 @@ sub _yeast_ciphers_overview { # TODO: obsolete when ciphers defined in OSaft/Cip
     print "
 === internal data structure for ciphers ===
 =
-= This function prints a simple overview of all available ciphers. The purpose
-= is to show if the internal data structure provides all necessary data.
+= Print a simple overview of all available ciphers.  The purpose is to show if
+= the internal data structure provides all necessary data for a cipher suite.
 =
 =   description of columns:
 =       key         - hex key for cipher suite
@@ -224,17 +242,17 @@ sub _yeast_ciphers_overview { # TODO: obsolete when ciphers defined in OSaft/Cip
 } # _yeast_ciphers_overview
 
 sub _yeast_ciphers_show     { # TODO: obsolete when ciphers defined in OSaft/Cipher.pm
+    local $\ = "\n";
     printf("#%s:\n", (caller(0))[3]);
     print "
 === internal data structure for ciphers ===
 =
-= This function prints a full overview of all available ciphers.
-= Output is similar (order of columns) but not identical to result of
-= 'openssl ciphers -V' command.
+= Print a full overview of all available ciphers.  Output is similar (order of
+= columns) but not identical to result of  'openssl ciphers -V'  command.
 =
 =   description of columns:
 =       key         - internal hex key for cipher suite
-=       hex         - hex key for cipher suite (like opnssl)
+=       hex         - hex key for cipher suite (like openssl)
 =       ssl         - SSL/TLS version
 =       keyx        - Key Exchange
 =       auth        - Authentication
@@ -243,8 +261,7 @@ sub _yeast_ciphers_show     { # TODO: obsolete when ciphers defined in OSaft/Cip
 =       mac         - MAC Algorithm
 =       sec         - Security
 =       name        - OpenSSL suite name
-=
-";
+=";
     my $cnt = 0;
     printf("=%9s\t%9s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
            "key", "hex", "ssl", "keyx", "auth", "enc", "bits", "mac", "sec", "name");
@@ -287,11 +304,11 @@ sub _yeast_ciphers_show     { # TODO: obsolete when ciphers defined in OSaft/Cip
 } # _yeast_ciphers_show
 
 sub _yeast_ciphers          { # TODO: obsolete when ciphers defined in OSaft/Cipher.pm
+    local $\ = "\n";
     printf("#%s:\n", (caller(0))[3]);
     print "
 === list of ciphers ===
 =
-
 ";
     return;
 } # _yeast_ciphers
@@ -299,7 +316,7 @@ sub _yeast_ciphers          { # TODO: obsolete when ciphers defined in OSaft/Cip
 sub _yeast_cipher           { # TODO: obsolete when ciphers defined in OSaft/Cipher.pm
     printf("#%s:\n", (caller(0))[3]);
     print "
-=== print internal data structures for a cipher ===
+=== internal data structures for a cipher ===
 
 ";
 # TODO: %ciphers %cipher_names
@@ -336,6 +353,7 @@ sub _yeast_init {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     #? print important content of %cfg and %cmd hashes
     #? more output if 1<trace; full output if 2<trace
     return if (0 >= ($cfg{'trace'} + $cfg{'verbose'}));
+    local $\ = "\n";
     my $arg = " (does not exist)";
     ## no critic qw(Variables::ProhibitPackageVars); they are intended here
     if (-f $cfg{'RC-FILE'}) { $arg = " (exists)"; }
@@ -347,9 +365,19 @@ sub _yeast_init {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     _yline("");
     _yTRAC("$0", $mainsid);     # $0 is same as $ARG0
     _yTRAC("_yeast_init::SID", $SID_dbx) if (2 > $cfg{'trace'});
+    # official VERSIONs, not those of the current files !
     _yTRAC("::osaft",  $osaft::VERSION);
     _yTRAC("Net::SSLhello", $Net::SSLhello::VERSION) if defined($Net::SSLhello::VERSION);
     _yTRAC("Net::SSLinfo",  $Net::SSLinfo::VERSION);
+    # quick info first
+    _yTRAC("RC-FILE", $cfg{'RC-FILE'} . $arg);
+    _yTRAC("--rc",    ((grep{/(?:--rc)$/i}     @ARGV) > 0)? 1 : 0);
+    _yTRAC("--no-rc", ((grep{/(?:--no.?rc)$/i} @ARGV) > 0)? 1 : 0);
+    _yTRAC("verbose", $cfg{'verbose'});
+    _yTRAC("trace",  "$cfg{'trace'}, traceARG=$cfg{'traceARG'}, traceCMD=$cfg{'traceCMD'}, traceKEY=$cfg{'traceKEY'}, traceTIME=$cfg{'traceTIME'}");
+    _yTRAC("time_absolut", $cfg{'time_absolut'});
+    _yTRAC("dbx{file}", "[ " . join(", ", @{$dbx{'file'}}) . " ]");
+
     if (1 < $cfg{'trace'}) {
         _yline(" Net::SSLinfo {");
         _yTRAC("::trace",         $Net::SSLinfo::trace);
@@ -372,46 +400,39 @@ sub _yeast_init {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
         _yTRAC("::timeout_sec",   $Net::SSLinfo::timeout_sec);
         _yline(" Net::SSLinfo }");
     }
-    _yTRAC("RC-FILE", $cfg{'RC-FILE'} . $arg);
-    _yTRAC("--rc",    ((grep{/(?:--rc)$/i}     @ARGV) > 0)? 1 : 0);
-    _yTRAC("--no-rc", ((grep{/(?:--no.?rc)$/i} @ARGV) > 0)? 1 : 0);
-    _yTRAC("verbose", $cfg{'verbose'});
-    _yTRAC("trace",  "$cfg{'trace'}, traceARG=$cfg{'traceARG'}, traceCMD=$cfg{'traceCMD'}, traceKEY=$cfg{'traceKEY'}, traceTIME=$cfg{'traceTIME'}");
-    _yTRAC("time_absolut", $cfg{'time_absolut'});
-    _yTRAC("dbx{file}", "[ " . join(", ", @{$dbx{'file'}}) . " ]");
-    
+
     _yline(" %cmd {");
-    if (2 > $cfg{'trace'}) {    # user friendly informations
-        _yeast("          path= " . _y_ARR(@{$cmd{'path'}}));
-        _yeast("          libs= " . _y_ARR(@{$cmd{'libs'}}));
+    if (2 > $cfg{'trace'}) {    # user friendly information
+        _yeast("          path= " . ___ARR(@{$cmd{'path'}}));
+        _yeast("          libs= " . ___ARR(@{$cmd{'libs'}}));
         _yeast("     envlibvar= $cmd{'envlibvar'}");
         _yeast("       timeout= $cmd{'timeout'}");
         _yeast("       openssl= $cmd{'openssl'}");
     } else {    # full information
         foreach my $key (sort keys %cmd) { _yeast_trac(\%cmd, $key); }
     }
-    _yeast("   use_openssl= $cmd{'extopenssl'}");   # user friendly always
+    _yeast("    extopenssl= $cmd{'extopenssl'}");   # user friendly always
     _yeast("use cipher from openssl= $cmd{'extciphers'}");  # dito.
     _yline(" %cmd }");
+
     if (1 < $cfg{'trace'}) {    # full information
         _yline(" complete %cfg {");
         foreach my $key (sort keys %cfg) {
-            if ($key =~ m/(hints|openssl|ssleay|sslerror|sslhello|regex)$/) { # |data
+            if ($key =~ m/(hints|openssl|ssleay|sslerror|sslhello|regex|^out|^use)$/) { # |data
                 # FIXME: ugly data structures ... should be done by _yTRAC()
                 _yeast("# - - - - HASH: $key = {");
                 foreach my $k (sort keys %{$cfg{$key}}) {
                     if ($key =~ m/openssl/) {
-                        _yTRAC($k, _y_ARR(@{$cfg{$key}{$k}}));
+                        _yTRAC($k, ___ARR(@{$cfg{$key}{$k}}));
                     } else {
-                        _yTRAC($k, $cfg{$key}{$k});
+                        #_yTRAC($k, $cfg{$key}{$k});
+                        _yeast_trac($cfg{$key}, $k);
                     };
                 };
                 _yeast("# - - - - HASH: $key }");
             } else {
                 if ($key =~ m/targets/) {   # TODO: quick&dirty to get full data
-                    foreach my $k (sort keys @{$cfg{$key}}) {
-                        _yTRAC($key . "[$k]", _y_ARR(@{$cfg{$key}[$k]}));
-                    }
+                    _yeast_targets($cfg{'trace'}, $cfg{'prefix_verbose'}, @{$cfg{'targets'}});
                 } else {
                     _yeast_trac(\%cfg, $key);
                 }
@@ -420,32 +441,35 @@ sub _yeast_init {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
         _yline(" %cfg }");
         return;
     }
-    # else  user friendly informations
+    # else  user friendly information
     my $sni_name = $cfg{'sni_name'} || "<<undef>>"; # default is Perl's undef
     my $port     = $cfg{'port'} || "<<undef>>";     # default is Perl's undef
     _yline(" user-friendly cfg {");
     _yeast("      ca_depth= $cfg{'ca_depth'}") if defined $cfg{'ca_depth'};
     _yeast("       ca_path= $cfg{'ca_path'}")  if defined $cfg{'ca_path'};
     _yeast("       ca_file= $cfg{'ca_file'}")  if defined $cfg{'ca_file'};
-    _yeast("       use_SNI= $Net::SSLinfo::use_SNI, force-sni=$cfg{'forcesni'}, sni_name=$sni_name");
+    _yeast("       use_SNI= $Net::SSLinfo::use_SNI, force-sni=$cfg{'use'}->{'forcesni'}, sni_name=$sni_name");
     _yeast("  default port= $port (last specified)");
     _yeast_targets($cfg{'trace'}, $cfg{'prefix_verbose'}, @{$cfg{'targets'}});
-    foreach my $key (qw(out_header format legacy showhost usehttp usedns usemx starttls starttls_delay slow_server_delay cipherrange)) {
-        printf("%s%14s= %s\n", $cfg{'prefix_verbose'}, $key, $cfg{$key});
-           # cannot use _yeast() 'cause of pretty printing
+    _yeast("     use->http= $cfg{'use'}->{'http'}");
+    _yeast("    use->https= $cfg{'use'}->{'https'}");
+    _yeast(" out->hostname= $cfg{'out'}->{'hostname'}");
+    _yeast("   out->header= $cfg{'out'}->{'header'}");
+    foreach my $key (qw(format legacy starttls starttls_delay slow_server_delay cipherrange)) {
+        _yTRAC($key, $cfg{$key});
     }
     foreach my $key (qw(starttls_phase starttls_error)) {
-        _yeast(      "$key= " . _y_ARR(@{$cfg{$key}}));
+        _yeast(      "$key= " . ___ARR(@{$cfg{$key}}));
     }
-    _yeast("   SSL version= " . _y_ARR(@{$cfg{'version'}}));
-    printf("%s%14s= %s", $cfg{'prefix_verbose'}, "SSL versions", "[ ");
-    printf("%s=%s ", $_, $cfg{$_}) foreach (@{$cfg{'versions'}});   ## no critic qw(ControlStructures::ProhibitPostfixControls)
+    _yeast("   SSL version= " . ___ARR(@{$cfg{'version'}}));
+    printf("%s",__TRAC("SSL versions", "[ "));  # no \n !
+    printf("%s=%s ", $_, $cfg{$_}) foreach (@{$cfg{'versions'}});
     printf("]\n");
-    _yeast(" special SSLv2= null-sslv2=$cfg{'nullssl2'}, ssl-lazy=$cfg{'ssl_lazy'}");
-    _yeast(" ignore output= " . _y_ARR(@{$cfg{'ignore-out'}}));
-    _yeast(" user commands= " . _y_ARR(@{$cfg{'commands_usr'}}));
-    _yeast("given commands= " . _y_ARR(@{$cfg{'done'}->{'arg_cmds'}}));
-    _yeast("      commands= " . _y_ARR(@{$cfg{'do'}}));
+    _yeast(" special SSLv2= null-sslv2=$cfg{'use'}->{'nullssl2'}, ssl-lazy=$cfg{'use'}->{'ssl_lazy'}");
+    _yeast(" ignore output= " . ___ARR(@{$cfg{'ignore-out'}}));
+    _yeast(" user commands= " . ___ARR(@{$cfg{'commands_usr'}}));
+    _yeast("given commands= " . ___ARR(@{$cfg{'done'}->{'arg_cmds'}}));
+    _yeast("      commands= " . ___ARR(@{$cfg{'do'}}));
     _yline(" user-friendly cfg }");
     _yeast("(more information with: --trace=2  or  --trace=3 )") if (1 > $cfg{'trace'});
     # $cfg{'ciphers'} may not yet set, print with _yeast_ciphers_list()
@@ -454,8 +478,8 @@ sub _yeast_init {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
 
 sub _yeast_exit {
     if (0 < $cfg{'trace'}) {
-        _yTRAC("cfg'exitcode'", $cfg{'exitcode'});
-        _yTRAC("exit status",   (($cfg{'exitcode'}==0) ? 0 : $checks{'cnt_checks_no'}->{val}));
+        _yTRAC("cfg'exitcode'", $cfg{'use'}->{'exitcode'});
+        _yTRAC("exit status",   (($cfg{'use'}->{'exitcode'}==0) ? 0 : $checks{'cnt_checks_no'}->{val}));
     }
     _y_CMD("internal administration ..");
     _y_CMD('@cfg{done} {');
@@ -477,9 +501,9 @@ sub _yeast_args {
     return if (0 >= $cfg{'traceARG'});
     # using _y_ARG() may be a performance penulty, but it's trace anyway ...
     _yline(" ARGV {");
-    _y_ARG("# summary of all arguments and options from command line");
+    _y_ARG("# summary of all arguments and options from command-line");
     _y_ARG("       called program ARG0= " . $cfg{'ARG0'});
-    _y_ARG("     passed arguments ARGV= " . _y_ARR(@{$cfg{'ARGV'}}));
+    _y_ARG("     passed arguments ARGV= " . ___ARR(@{$cfg{'ARGV'}}));
     _y_ARG("                   RC-FILE= " . $cfg{'RC-FILE'});
     _y_ARG("      from RC-FILE RC-ARGV= ($#{$cfg{'RC-ARGV'}} more args ...)");
     if (0 >= $cfg{'verbose'}) {
@@ -487,7 +511,7 @@ sub _yeast_args {
     _y_ARG("      !!Hint:  use --v --v to see the processed RC-ARGV");
                   # NOTE: ($cfg{'trace'} does not work here
     }
-    _y_ARG("      from RC-FILE RC-ARGV= " . _y_ARR(@{$cfg{'RC-ARGV'}})) if (0 < $cfg{'verbose'});
+    _y_ARG("      from RC-FILE RC-ARGV= " . ___ARR(@{$cfg{'RC-ARGV'}})) if (0 < $cfg{'verbose'});
     my $txt = "[ ";
     foreach my $target (@{$cfg{'targets'}}) {
         next if (0 == @{$target}[0]);   # first entry conatins default settings
@@ -497,10 +521,10 @@ sub _yeast_args {
     _y_ARG("         collected targets= " . $txt);
     if (1 < $cfg{'verbose'}) {
     _y_ARG(" #--v { processed files, arguments and options");
-    _y_ARG("    read files and modules= ". _y_ARR(@{$dbx{file}}));
-    _y_ARG("processed  exec  arguments= ". _y_ARR(@{$dbx{exe}}));
-    _y_ARG("processed normal arguments= ". _y_ARR(@{$dbx{argv}}));
-    _y_ARG("processed config arguments= ". _y_ARR(map{"`".$_."'"} @{$dbx{cfg}}));
+    _y_ARG("    read files and modules= ". ___ARR(@{$dbx{file}}));
+    _y_ARG("processed  exec  arguments= ". ___ARR(@{$dbx{exe}}));
+    _y_ARG("processed normal arguments= ". ___ARR(@{$dbx{argv}}));
+    _y_ARG("processed config arguments= ". ___ARR(map{"`".$_."'"} @{$dbx{cfg}}));
     _y_ARG(" #--v }");
     }
     _yline(" ARGV }");
@@ -529,7 +553,7 @@ sub _trace_     { local $\ = "";  print  " " . join(" ", @_) if (0 < $cfg{'trace
 sub _trace_cmd  { printf("%s %s->\n", $cfg{'prefix_trace'}, join(" ",@_)) if (0 < $cfg{'traceCMD'}); return; }
 
 sub _vprintme   {
-    #? write own version, command line arguments and date and time
+    #? write own version, command-line arguments and date and time
     my ($s,$m,$h,$mday,$mon,$year,$wday,$yday,$isdst) = localtime();
     return if (0 >= ($cfg{'verbose'} + $cfg{'trace'}));
     _yeast("$0 " . $mainsid);
@@ -544,17 +568,72 @@ sub _vprintme   {
 
 # subs for formatted table
 sub __data      { return (_is_member(shift, \@{$cfg{'commands'}}) > 0)   ? "*" : "?"; }
-sub __data_title{ return sprintf("=%19s %s %s %s %s %s %s %s\n", @_); }
+sub __data_title{ return sprintf("=%19s %s %s %s %s %s %s %s", @_); }
 sub __data_head { return __data_title("key", "command", " %data  ", "%checks", "cmd-ch.", "short ", "intern ", " score"); }
-sub __data_line { return sprintf("=%19s+%s+%s+%s+%s+%s+%s+%s\n", "-"x19, "-"x7, "-"x7, "-"x7, "-"x7, "-"x7, "-"x7, "-"x7); }
-sub __data_data { return sprintf("%20s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", @_); }
+sub __data_line { return sprintf("=%19s+%s+%s+%s+%s+%s+%s+%s", "-"x19, "-"x7, "-"x7, "-"x7, "-"x7, "-"x7, "-"x7, "-"x7); }
+sub __data_data { return sprintf("%20s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", @_); }
 
-sub _yeast_data {
+# subs for fomated maps
+sub __prot_option   {
+    my $data;
+    foreach my $key (sort keys %{$cfg{'openssl_option_map'}})  {
+        $data .= __trac(\%{$cfg{'openssl_option_map'}}, $key) . "\n";
+    }
+    chomp  $data;   # remove last \n
+    return $data;
+} # __prot_option
+
+sub __prot_version  {
+    my $data;
+    foreach my $key (sort keys %{$cfg{'openssl_version_map'}}) {
+        $data .= __yeast(sprintf("%14s= ", $key) . sprintf("0x%04X 0x%08x",
+                                 ${$cfg{'openssl_version_map'}}{$key},
+                                 ${$cfg{'openssl_version_map'}}{$key})
+                        ) . "\n";
+    }
+    chomp  $data;   # remove last \n
+    return $data;
+} # __prot_version
+
+sub _yeast_test_help    {
+    local $\ = "\n";
     printf("#%s:\n", (caller(0))[3]);
     print "
-=== internal data structure for commands ===
+=== commands for internal testing ===
 =
-= This function prints a simple overview of all available commands and checks.
+= Print list of commands for internal testing/information.
+=
+=   command/option  prints this information
+=  ----------------+----------------------------------------------
+=   --tests         this text
+=   --test-init     data structure  %cfg after initialisation
+=   --test-data     overview of all available commands and checks
+=   --test-maps     internal data strucures '%cfg{openssl}', '%cfg{ssleay}'
+=   --test-prot     internal data according protocols
+=   --test-regex    results for applying various texts to regex
+=   --test-ciphers-list     list of hex keys of known ciphers
+=   --test-ciphers-show     complete list of ciphers
+=   --test-ciphers-sorted   list of ciphers sorted according strength
+=   --test-ciphers-overview overview of all available ciphers with all attributes
+=   --test-methods  available methods for openssl in Net::SSLeay
+=   --test-sclient  available options for 'openssl s_client' from Net::SSLeay
+=   --test-sslmap   constants for SSL protocols from Net::SSLeay
+=   --test-ssleay   information about Net::SSLeay capabilities
+=  ----------------+----------------------------------------------
+=";
+    # o-saft.tcl --test-o-saft  # just for completeness, not used here
+    # NOTE: description above should be similar to those in
+    #       OSaft/Doc/help.txt
+    return $data;
+} # _yeast_test_help
+
+sub _yeast_test_data    {
+    local $\ = "\n";
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal data structure: overview of commands, %data and %checks ===
+=
+= Print a simple overview of all available commands for  +info  and  +check .
 = The purpose is to show if a proper key is defined in  %data and %checks  for
 = each command from  %cfg{'commands'}  and vice versa.
 =
@@ -568,8 +647,7 @@ sub _yeast_data {
 =   short       desciption of command available as short text
 =   intern      internal command only, not avaialable as +key
 =  ------------+--------------------------------------------------
-=
-";
+=";
 
     my $old;
     my @yeast = ();     # list of potential internal, private commands
@@ -587,7 +665,7 @@ sub _yeast_data {
         next if ($key eq $old); # unique
         $old = $key;
         if ((not defined $checks{$key}) and (not defined $data{$key})) {
-            push(@yeast, $key); # probaly internal command
+            push(@yeast, $key); # probably internal command
             next;
         }
         $cmd = "+" if (0 < _is_member($key, \@{$cfg{'commands'}})); # command available as is
@@ -599,7 +677,7 @@ sub _yeast_data {
             ((_is_member($key, \@{$dbx{'cmd-check'}}) > 0)
             || ($key =~ /$cfg{'regex'}->{'SSLprot'}/i)) ?   "*"  : "!",   # cmd-ch.
             (defined $shorttexts{$key})                 ?   "*"  : " ",   # short
-            (_is_intern($key) > 0)                      ?   "I"  : " ",   # intern
+            (_is_cfg_intern($key))                      ?   "I"  : " ",   # intern
             (defined $checks{$key}->{score}) ? $checks{$key}->{score} : ".",
             );
     }
@@ -610,7 +688,7 @@ sub _yeast_data {
 #               
     print __data_line();
     print __data_head();
-    print "
+    print "=
 =   +  command (key) present
 =   I  command is an internal command or alias (ok in column 'intern')
 =   -  command (key) used internal for checks only (ok in column 'command')
@@ -623,19 +701,92 @@ sub _yeast_data {
 = A shorttext should be available for each command and all data keys, except:
 =      cn_nosni, ext_*, valid_*
 =
-";
-    print "= internal or summary commands:\n=      " . join(" ", @yeast);
-    print "\n";
+= Internal or summary commands:
+=      " . join(" ", @yeast) . "\n";
     return;
-} # _yeast_data
+} # _yeast_test_data
 
-sub _yeast_prot {
+sub _yeast_test_init    {
+    local $\ = "\n";
+    local $Data::Dumper::Deparse=1; # parse code, see man Data::Dumper
+    my $line = "#--------------------+-------------------------------------------";
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal data structure: initialisation of %cfg, %data and %checks ===
+=
+= Print initialised data structure  %data and %checks  after all  command-line
+= options have been applied.
+=
+";
+#ah not ok: use Sub::Identify ':all';
+    _yline(" %cfg {");  # only data which influences initialisations
+    print __yeast("#                key | value");
+    print __yeast($line);
+    print __INIT("ARGV", ___ARR(@{$cfg{'ARGV'}}));
+    _yline(" %cfg{use} {");
+    foreach my $key (sort keys %{$cfg{'use'}}) {
+        print __INIT($key, $cfg{'use'}{$key});
+    }
+    _yline(" %cfg{use} }");
+    print __yeast($line);
+    _yline(" %cfg }");
+    _yline(" %data {");
+    print __yeast("#                key | value (function code)");
+    print __yeast($line);
+    foreach my $key (sort keys %data) { # ugly and slow code
+        # use Dumper() to get code, returns something like:
+        #     $VAR1 = sub {
+        #                 use warnings;
+        #                 use strict;
+        #                 Net::SSLinfo::version($_[0], $_[1]);
+        #             };
+        # we only want the code line, hence remove the others
+        my $code = Dumper($data{$key}->{val});
+        $code =~ s/^\$VAR.*//;
+        $code =~ s/(?:};)?\s*$//g;
+        $code =~ s/use\s*(?:strict|warnings);//g;
+        $code =~ s/\n//g;
+        $code =~ s/^\s*//g;
+        print __INIT($key, $code);
+    }
+    print __yeast($line);
+    _yline(" %data }");
+    _yline(" %checks {");
+    print __yeast("#                key | value");
+    print __yeast($line);
+    foreach my $key (sort keys %checks) {
+        print __INIT($key, $checks{$key}->{val});
+    }
+    print __yeast($line);
+    _yline(" %checks }");
+    return;
+} # _yeast_test_init
+
+sub _yeast_test_maps    {
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal data structure %cfg{openssl}, %cfg{ssleay} ===
+=
+= Print internal mappings for openssl functionality (mainly options).
+=
+";
+    local $\ = "\n";
+    my $data = Net::SSLinfo::test_sslmap();
+       $data =~ s/^#/#$cfg{'me'}/smg;
+    print $data;
+    _yline(" %cfg{openssl_option_map} {");
+    print __prot_option();
+    _yline(" %cfg{openssl_version_map} {");
+    print __prot_version();
+    return;
+} # _yeast_test_maps
+
+sub _yeast_test_prot    {
     printf("#%s:\n", (caller(0))[3]);
     print "
 === internal data structure according protocols ===
 =
-= This function prints information about SSL/TLS protocols in various internal
-= variables (hashes).
+= Print information about SSL/TLS protocols in various internal variables.
 =
 ";
     local $\ = "\n";
@@ -648,14 +799,10 @@ sub _yeast_prot {
     }
     _yline(" }");
     _yline(" %cfg{openssl_option_map} {");
-    foreach my $key (sort keys %{$cfg{'openssl_option_map'}})  {
-        _yeast_trac(\%{$cfg{'openssl_option_map'}}, $key);
-    }
+    print __prot_option();
     _yline(" }");
     _yline(" %cfg{openssl_version_map} {");
-    foreach my $key (sort keys %{$cfg{'openssl_version_map'}}) {
-        _yeast(sprintf("%14s= ", $key) . sprintf("0x%04x (%d)", ${$cfg{'openssl_version_map'}}{$key}, ${$cfg{'openssl_version_map'}}{$key}));
-    }
+    print __prot_version();
     _yline(" }");
     # %check_conn and %check_dest are temporary and should be inside %checks
     _yline(" %checks {");
@@ -672,18 +819,145 @@ sub _yeast_prot {
     if (0 < ($cfg{'trace'} + $cfg{'verbose'})){
     }
     return;
-} # _yeast_prot
+} # _yeast_test_prot
+
+sub _yeast_test_methods {
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal list of methods to call openssl ===
+=
+= Print available methods in Net::SSLeay.
+=
+";
+    my $list = Net::SSLinfo::test_methods();
+       $list =~ s/ /\n# /g;
+    print "# $list";
+    return;
+} # _yeast_test_methods
+
+sub _yeast_test_sclient {
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal list of openssl s_client options ===
+=
+= Print available options for 'openssl s_client' from Net::SSLeay.
+=
+";
+    my $list = Net::SSLinfo::test_sclient();
+       $list =~ s/ /\n# /g;
+    print "# $list";
+    return;
+} # _yeast_test_sclient
+
+sub _yeast_test_sslmap  {
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal list of constants for SSL protocols ===
+=
+= Print available constants for SSL protocols in Net::SSLeay.
+=
+";
+    print Net::SSLinfo::test_sslmap();
+    return;
+} # _yeast_test_sslmap
+
+sub _yeast_test_ssleay  {
+    printf("#%s:\n", (caller(0))[3]);
+    print "
+=== internal data of from Net::SSLeay ===
+=
+= Print information about Net::SSLeay capabilities.
+=
+";
+    print Net::SSLinfo::test_ssleay();
+    return;
+} # _yeast_test_ssleay
+
+sub _yeast_test_memory  {
+    #? print overview of memory usage of variables
+    # This is not part of the functionality of O-Saft itself, but more like
+    # a quality or performance check.
+    # I.g. it should be implemented in makefiles or alike, but is done here
+    # in the source because the variables are avaiable in the source only.
+    printf("#%s:\n", (caller(0))[3]);
+    require Devel::Size;    # require instead of use to avoid dependencies (i.e. in checkAllCiphers.pl)
+    my %types = (   # TODO: not yet used
+        'ARRAY'   => '@',
+        'CODE'    => '{',
+        'FORMAT'  => '#',
+        'GLOB'    => '*',
+        'HASH'    => '%',
+        'IO'      => '&',
+        'LVALUE'  => '=',
+        'REF'     => '\\',
+        'REGEXP'  => '/',
+        'SCALAR'  => '$',
+        'VSTRING' => '"',
+    );
+    print "
+=== memory usage of internal variables ===
+=
+";
+    if (0 < ($cfg{'trace'} + $cfg{'verbose'})){
+        foreach my $k (keys %cfg) {
+	    printf "%6s\t%s\n",Devel::Size::total_size(\$cfg{$k}),"%cfg{$k}";
+        }
+    }
+    my $bytes = 0;
+    my $line  = "=------+----------------";
+    # get all global variables and grep for our ones
+    # ugly code, but generic
+    print "= Bytes variable\n$line";
+    foreach my $v (sort keys %main::) {
+        #print Dumper $v; # liefert den gesamten Hash
+        next if ("*{$main::{$v}}" !~ m/\*main::/);
+        next if ($main::{$v} =~ m/::$/);           # avoid "Segmentation fault"
+        next if (not grep {/^(cfg|check|cipher|cmd|data|dbx|info|osaft|short|text)/} $v) ;
+        next if (    grep {/^check(cipher|http)/} $v) ; # avoid "Segmentation fault"
+        # TODO: my $typ = ref($main::{$v}); # not yet working
+        #dbx print "K $v $main::{$v} => $t";
+        my $size = Devel::Size::total_size(\$main::{$v});
+        $bytes += $size;
+        printf("%7s\t%s\n", $size, $v);#if (exists $main::{$v});
+    }
+    print "$line";
+    printf("%7s\t(%2.2f MB) total\n", $bytes, $bytes/1024/1024);
+    # the traditional way ...
+    #print "%cfg    : ", Devel::Size::total_size(\%cfg);
+    #print "%data   : ", Devel::Size::total_size(\%data);
+    #print "%checks : ", Devel::Size::total_size(\%checks);
+    #print "%ciphers: ", Devel::Size::total_size(\%ciphers);
+    #print "\@results: ", Devel::Size::total_size(\@cipher_results);
+    #print "%text   : ", Devel::Size::total_size(\%text);
+    #print "%_SSLinfo   : ", Devel::Size::total_size(\%Net::SSLinfo::_SSLinfo);
+    return;
+} # _yeast_test_memory
 
 sub _yeast_test {
     #? dispatcher for internal tests, initiated with option --test-*
-    my $arg = shift;
+    my $arg = shift;    # normalised option, like --testinit
     _yeast($arg);
-    osaft::test_regex()     if ('regex'     eq $arg);
-    _yeast_data()           if ('data'      eq $arg);
-    _yeast_prot()           if ('prot'      eq $arg);
+    _yeast_test_help()        if ('--test'      eq $arg);
+    _yeast_test_help()        if ('--tests'     eq $arg);
+    _yeast_test_sclient()     if ('--testsclient' eq $arg);
+    _yeast_test_ssleay()      if ('--testssleay'  eq $arg);
+    _yeast_test_sslmap()      if ('--testsslmap'  eq $arg);
+    _yeast_test_methods()     if ('--testmethods' eq $arg);
+    _yeast_test_memory()      if ('--testmemory'  eq $arg);
+    $arg =~ s/^[+-]-?tests?[._-]?//; # remove --test
+    osaft::test_regex()       if ('regex'       eq $arg);
+    _yeast_test_data()        if ('data'        eq $arg);
+    _yeast_test_init()        if ('init'        eq $arg);
+    _yeast_test_maps()        if ('maps'        eq $arg);
+    _yeast_test_prot()        if ('prot'        eq $arg);
     # TODO: some of following obsolete when ciphers defined in OSaft/Cipher.pm
-    _yeast_ciphers_sorted() if ($arg =~ /^cipher.[_-]?sort/);
-    if ($arg =~ /^cipher.[_-]?list/) {
+    _yeast_ciphers()          if ('ciphers'     eq $arg);
+    $arg =~ s/^ciphers?[._-]?//;    # allow --test-cipher* and --test-cipher-*
+    _yeast_ciphers_sorted()   if ($arg =~ m/^sort(?:ed)?/);
+    _yeast_ciphers_show()     if ('show'        eq $arg);
+    _yeast_ciphers_overview() if ('overview'    eq $arg);
+   #_yeast_ciphers_list()    if ('list'     eq $arg);
+    if ('list'     eq $arg) {
         # FIXME: --test-ciphers is experimental
         # _yeast_ciphers_list() relies on some special $cfg{} settings
         $cfg{'verbose'} = 1;
@@ -691,33 +965,24 @@ sub _yeast_test {
         push(@{$cfg{'version'}}, 'TLSv1') if (0 > $#{$cfg{'version'}});
         _yeast_ciphers_list();
     }
-    _yeast_ciphers_overview() if ('overview' eq $arg);
-    _yeast_ciphers_show()   if ('show'      eq $arg);
-    _yeast_ciphers()        if ('ciphers'   eq $arg);
     return;
 } # _yeast_test
 
 sub _main_dbx       {
+    my $arg = shift || "--help";    # without argument print own help
     ## no critic qw(InputOutput::RequireEncodingWithUTF8Layer)
     #   see t/.perlcriticrc for detailed description of "no critic"
-    my $arg = shift || "--help";
+    #  SEE Perl:binmode()
     binmode(STDOUT, ":unix:utf8");
     binmode(STDERR, ":unix:utf8");
-    if ($arg =~ m/--?h(elp)?$/) {
-        # printf("# %s %s\n", __PACKAGE__, $mainsid);  # FIXME: if it is a perl package
-        printf("# %s %s\n", __FILE__, $SID_dbx);
-        if (eval {require POD::Perldoc;}) {
-            # pod2usage( -verbose => 1 )
-            exec( Pod::Perldoc->run(args=>[$0]) );
-        }
-        if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
-            # may return:  You need to install the perl-doc package to use this program.
-            #exec "perldoc $0"; # scary ...
-            printf("# no POD::Perldoc installed, please try:\n   perldoc $0\n");
-        }
+    print_pod($0, __FILE__, $SID_dbx)   if ($arg =~ m/--?h(elp)?$/x);   # print own help
+    # else
+    if ($arg =~ m/--tests?$/) {
+        _yeast_test_help();
+        exit 0;
     }
     if ($arg =~ m/--(yeast|test)[_.-]?(.*)/) {
-        $arg = "--test-$1";
+        $arg = "--test-$2";
         printf("#$0: direct testing not yet possible, please try:\n   o-saft.pl $arg\n");
         # TODO: _yeast_test($arg);
     }
@@ -755,11 +1020,23 @@ o-saft-dbx.pm - module for tracing o-saft.pl
 
 =item --help
 
+=item --tests
+
 =item --test-ciphers-list
+
+=item --test-ciphers-show
 
 =item --test-ciphers-sort
 
+=item --test-ciphers-overview
+
+=item --test-regex
+
 =item --test-data
+
+=item --test-init
+
+=item --test-maps
 
 =item --test-prot
 
@@ -807,9 +1084,27 @@ Defines all function needed for trace and debug output in  L<o-saft.pl|o-saft.pl
 
 =item _yeast_ciphers_sorted( )
 
-=item _yeast_data( )
+=item _yeast_ciphers_show( )
 
-=item _yeast_prot( )
+=item _yeast_ciphers_overview( )
+
+=item _yeast_test_help( )
+
+=item _yeast_test_data( )
+
+=item _yeast_test_init( )
+
+=item _yeast_test_maps( )
+
+=item _yeast_test_prot( )
+
+=item _yeast_test_methods( )
+
+=item _yeast_test_sclient( )
+
+=item _yeast_test_sslmap( )
+
+=item _yeast_test_ssleay( )
 
 =item _yeast_test( )
 
@@ -854,7 +1149,7 @@ or any I<--trace*>  option, which then loads this file automatically.
 
 =head1 VERSION
 
-1.108 2019/12/05
+1.154 2021/02/16
 
 =head1 AUTHOR
 

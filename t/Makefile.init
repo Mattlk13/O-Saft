@@ -1,0 +1,109 @@
+#! /usr/bin/make -rRf
+#?
+#? DESCRIPTION
+#?      For more details please see
+#?          ../Makefile  Makefile  Makefile.help  Makefile.pod
+#?      make help.test.init
+#?
+#? VERSION
+#?      @(#) Makefile.init 1.4 20/01/05 11:19:15
+#?
+#? AUTHOR
+#?      19-dez-19 Achim Hoffmann
+#?
+# -----------------------------------------------------------------------------
+
+HELP-help.test.init = targets for testing initialisations of o-saft.pl
+
+_SID.init          := 1.4
+
+_MYSELF.init       := t/Makefile.init
+ALL.includes       += $(_MYSELF.init)
+ALL.inc.type       += init
+ALL.help.tests     += help.test.init
+
+ifeq (,$(_SID.test))
+    -include t/Makefile
+endif
+
+# no target hosts needed here
+TEST.init.hosts     =
+
+first-init-target-is-default: help.test.init
+
+help.test.init:       HELP_TYPE = init
+help.test.init-v:     HELP_TYPE = init
+help.test.init-vv:    HELP_TYPE = init
+
+HELP-_init1         = __________________________________ testing initialisations _
+HELP-test.init      = test various initialisations of '$(EXE.pl)'
+HELP-test.init.log  = same as test.init but store output in '$(TEST.logdir)/'
+HELP-testarg-init-D = individual target(s) for testing
+
+LIST.init.cmds     := \
+	+info   +ciphers   +check  +checkciphers   +protocols  +vulns  +cert +cn
+
+LIST.init.opt0     :=
+LIST.init.opt1     := --no-http  --no-dns --no-sni
+LIST.init.opt2     := --no-alpn  --no-npn 
+LIST.init.opt3     := --no-cert  --no-tlsextdebug
+LIST.init.opt4     := --no-sslv2 --no-sslv3
+LIST.init.opt5     := $(LIST.init.opt4) --no-tlsv1 --no-tlsv11
+LIST.init.opt6     := $(LIST.init.opt5) --no-tlsv12
+LIST.init.opt7     := $(LIST.init.opt6) --no-tlsv13
+
+LIST.init.opts     := opt0 opt1 opt2 opt3 opt4 opt5 opt6 opt7
+    # only extensions, not the full variable name, so they can be used directly
+    # when generating target names (see below)
+
+# TODO: options to be tested: --no-openssl --no-tcp
+
+#_____________________________________________________________________________
+#______________________________________________________ targets for testing __|
+
+# The goal here is to generate all targets from the variables defined above.
+# Each command in $(LIST.init.cmds) should be called with each set of options
+# $(LIST.init.opt*).
+# The generated targets look like:
+#       testarg-init-+CMD-optD: TEST.args := +CMD $(optD)
+# where +CMD is the command from $(LIST.init.cmds) and D is the number of the
+# variable LIST.init.opt* and $(optD) the content of $(LIST.init.optD.
+# Example:
+#       testarg-init-+info-opt0: TEST.args := +info
+#       testarg-init-+cert-opt1: TEST.args := +cert --no-dns --no-http
+#
+# Finally the pattern rule  testarg-init-%   calls the generated target.
+# Use:
+#       make test.init -n
+# to see how all generated targets look like.
+
+ifndef init-generated
+    $(foreach cmd, $(LIST.init.cmds),\
+      $(foreach opt, $(LIST.init.opts),\
+        $(eval testarg-init-$(cmd)-$(opt): TEST.args := $(cmd) $(LIST.init.$(opt)) ) \
+        $(eval ALL.test.init   += testarg-init-$(cmd)-$(opt) ) \
+      ) \
+    )
+endif
+
+testarg-init-%:         EXE.pl      := $(SRC.pl)
+testarg-init-%:         TEST.init   :=  any-host --no-rc --test-init
+
+# some individual targets (not all variant of cmd and opt required)
+testarg-init-+ext-opt901:   TEST.args := +extensions +tlsextensions +tlsextdebug
+testarg-init-+ext-opt902:   TEST.args := +extensions +tlsextensions +tlsextdebug --no-tlsextdebug
+testarg-init-+heart-opt903: TEST.args := +heartbeat  +heartbleed
+testarg-init-+heart-opt904: TEST.args := +heartbeat  +heartbleed                 --no-tlsextdebug
+
+ALL.test.init  += testarg-init-+ext-opt901   testarg-init-+ext-opt902
+ALL.test.init  += testarg-init-+heart-opt903 testarg-init-+heart-opt904
+
+ALL.test.init.log   = $(ALL.test.init:%=%.log)
+
+
+test.init.log-compare:  TEST.target_prefix  = testarg-init-
+test.init.log-move:     TEST.target_prefix  = testarg-init-
+test.init.log:          TEST.target_prefix  = testarg-init-
+
+test.init:          $(ALL.test.init)
+test.init.log:      $(ALL.test.init.log) test.log-compare-hint

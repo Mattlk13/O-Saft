@@ -21,7 +21,7 @@
 #?       NOTE: this will not generate a bulletproof stand-alone script!
 #?
 #? VERSION
-#?       @(#)  1.14 19/12/03 08:31:08
+#?       @(#)  1.16 21/02/17 23:09:48
 #?
 #? AUTHOR
 #?      02-apr-16 Achim Hoffmann
@@ -29,7 +29,7 @@
 # -----------------------------------------------------------------------------
 
 dst=/dev/stdout # default STDOUT
-src=o-saft.pl
+src=o-saft.pl ; [ -f $src ] || src=../$src
 try=
 sid=1
 info=1
@@ -50,7 +50,7 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-o_saft="
+_o_saft="
 	osaft.pm
 	OSaft/error_handler.pm
 	OSaft/Doc/Data.pm
@@ -60,15 +60,25 @@ o_saft="
 	o-saft-usr.pm
 	o-saft-man.pm
 "
+o_saft=""
+for f in $_o_saft ; do
+	[ -f $f ] || f=../$f    # quick&dirty if called in sub-directory
+	o_saft="$o_saft $f"
+done
 
-osaft_doc="
-		OSaft/Doc/coding.txt
-		OSaft/Doc/glossary.txt
-		OSaft/Doc/help.txt
-		OSaft/Doc/links.txt
-		OSaft/Doc/rfc.txt
+_osaft_doc="
+	OSaft/Doc/coding.txt
+	OSaft/Doc/glossary.txt
+	OSaft/Doc/help.txt
+	OSaft/Doc/links.txt
+	OSaft/Doc/rfc.txt
 "
 #	OSaft/Doc/misc \
+osaft_doc=""
+for f in $_osaft_doc ; do
+	[ -f $f ] || f=../$f    # quick&dirty if called in sub-directory
+	osaft_doc="$osaft_doc $f"
+done
 
 
 if [ $sid -eq 1 ]; then
@@ -125,21 +135,21 @@ fi
 
   # 4.
   # osaft.pm without brackets and no package
-  f=osaft.pm
+  f=osaft.pm ; [ -f $f ] || f=../$f
   \echo "# { # $f"
   $try \perl -ne 'print if (m(## PACKAGE [{])..m(## PACKAGE })) and not m(package osaft;)' $f
   \echo "# } # $f"
   \echo ""
 
   ## TODO: OSaft/Doc/Data.pm
-  f=OSaft/Doc/Data.pm
+  f=OSaft/Doc/Data.pm ; [ -f $f ] || f=../$f
   \echo "{ # $f"
   $try \perl -ne 'print if (m(## PACKAGE [{])..m(## PACKAGE }))' $f
   \echo "} # $f"
   \echo ""
 
   # TODO: o-saft-usr.pm  works, but not yet perfect
-  f=o-saft-usr.pm
+  f=o-saft-usr.pm ; [ -f $f ] || f=../$f
   \echo "{ # $f"
   $try \perl -ne 'print if (m(## PACKAGE [{])..m(## PACKAGE }))' $f
   #$try \cat $f
@@ -154,21 +164,21 @@ fi
   #\echo ""
 
   ## TODO: o-saft-man  fails to include properly
-  f=o-saft-man.pm
+  f=o-saft-man.pm ; [ -f $f ] || f=../$f
   \echo "{ # $f"
   $try \perl -ne 'print if (m(## PACKAGE [{])..m(## PACKAGE })) and not m(use osaft;)' $f \
      | \grep -v  '^use OSaft::Doc::Data'
   \echo "} # $f"
   \echo ""
 
-  f=OSaft/error_handler.pm
+  f=OSaft/error_handler.pm ; [ -f $f ] || f=../$f
   \echo "{ # $f"
   #$try \perl -ne 'print if (m(## PACKAGE [{])..m(## PACKAGE }))' $f
   $try \cat $f
   \echo "} # $f"
   \echo ""
 
-  f=Net/SSLinfo.pm
+  f=Net/SSLinfo.pm ; [ -f $f ] || f=../$f
   \echo "{ # $f"
   $try \perl -ne 'print if (m(## PACKAGE [{])..m(## PACKAGE }))' $f
   \echo ""
@@ -203,9 +213,17 @@ fi
 [ $info -eq 0 ] && exit
 
 [ "/dev/stdout" != "$dst" ] && $try \ls    -la $dst
-\echo "# $dst generated"
 
-cat << EoDescription
+# Writing on /dev/stdout is scary on some systems (i.e Linux). If code above
+# was written on /dev/stdout, the buffer may not yet flushed. Then following
+# echo and cat commands,  which write on the tty's STDOUT, my overwrite what
+# is already there. Some kind of race condition ...
+# As the shell has no build-in posibility to flush STDOUT,  following output
+# is written to /dev/stdout directly to avoid overwriting, ugly but seems to
+# work ...
+
+cat << EoDescription >> /dev/stdout
+# $dst generated
 
 	The generated stand-alone script misses following functionality:
 	* Commands

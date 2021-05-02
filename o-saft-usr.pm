@@ -1,13 +1,30 @@
 #!/usr/bin/perl
 ## PACKAGE {
 
-#!# Copyright (c) 2019, Achim Hoffmann, sic[!]sec GmbH
+#!# Copyright (c) 2021, Achim Hoffmann
 #!# This  software is licensed under GPLv2. Please see o-saft.pl for details.
+
+package main;   # ensure that main:: variables are used
 
 ## no critic qw(Documentation::RequirePodSections)
 # SEE Perl:perlcritic
 
-package main;   # ensure that main:: variables are used
+use strict;
+use warnings;
+
+no warnings 'redefine'; ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
+   # must be herein, as most subroutines are already defined in main
+   # warnings pragma is local to this file!
+
+BEGIN { # mainly required for testing ...
+    # SEE Perl:BEGIN perlcritic
+    my $_path = $0;     $_path =~ s#[/\\][^/\\]*$##x;
+    unshift(@INC, ".",  $_path);
+}
+
+use osaft qw(print_pod);
+
+my  $SID_usr= "@(#) o-saft-usr.pm 1.34 21/01/14 00:12:00";
 
 
 #_____________________________________________________________________________
@@ -28,14 +45,14 @@ o-saft-usr.pm - module for o-saft.pl's user definable functions
 
 =item require q{o-saft-usr.pm};     # in perl code
 
-=item o-saft-usr.pm --help          # on command line will print help
+=item o-saft-usr.pm --help          # on command-line will print help
 
 =back
 
 
 =head1 DESCRIPTION
 
-Defines all functions for user customization.
+Defines all functions for user customisation.
 
 WARNING: this is not a perl module defined with `package', but uses:
     package main;
@@ -49,21 +66,21 @@ prefix like:
 
 =item usr_pre_init( )
 
-At beginning, right before initializing internal data.
+At beginning, right before initialising internal data.
 
 =item usr_pre_file( )
 
-At beginning, right after initializing internal data.
+At beginning, right after initialising internal data.
 
 =item usr_pre_args( )
 
-Right before reading command line arguments.  All internal structures
-and variables are initialized, all external files are read (except
+Right before reading command-line arguments.  All internal structures
+and variables are initialised, all external files are read (except
 configuration files specified witj  I<--cfg_*=>  option.
 
 =item usr_pre_exec( )
 
-All command line arguments are read. Right before executing myself.
+All command-line arguments are read. Right before executing myself.
 
 =item usr_pre_cipher( )
 
@@ -136,24 +153,7 @@ For example:
 
     sub usr_pre_args() {}
 
-=head1 VERSION
-
-1.24 2019/04/27
-
-=head1 AUTHOR
-
-13-nov-13 Achim Hoffmann
-
 =cut
-
-use strict;
-use warnings;
-
-my  $SID_usr= "@(#) o-saft-usr.pm 1.24 19/04/27 12:19:56";
-
-no warnings 'redefine'; ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
-   # must be herein, as most subroutines are already defined in main
-   # warnings pragma is local to this file!
 
 #_____________________________________________________________________________
 #__________________________________________________________________ methods __|
@@ -247,26 +247,32 @@ sub usr_pre_exit    {
     return;
 };
 
-sub _main           {
+sub _main_usr       {
+    my $arg = shift || "--help";    # without argument print own help
     ## no critic qw(InputOutput::RequireEncodingWithUTF8Layer)
     #   see t/.perlcriticrc for detailed description of "no critic"
-    my $arg = shift;
-       $arg = "--help"; # no other options implemented yet
-    if ($arg =~ m/--?h(elp)?$/x) {
-        # printf("# %s %s\n", __PACKAGE__, $VERSION);  # FIXME: if it is a perl package
-        printf("# %s %s\n", __FILE__, $SID_usr);
-        if (eval{require POD::Perldoc;}) {
-            # pod2usage( -verbose => 1 )
-            exit( Pod::Perldoc->run(args=>[$0]) );
-        }
-        if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
-            printf("# no POD::Perldoc installed, please try:\n  perldoc $0\n");
-        }
-    }
+    #  SEE Perl:binmode()
+    binmode(STDOUT, ":unix:utf8");
+    binmode(STDERR, ":unix:utf8");
+    print_pod($0, __FILE__, $SID_usr)   if ($arg =~ m/--?h(elp)?$/x);   # print own help
+    # no other options implemented yet
     exit 0;
 } # _main
 
 sub o_saft_usr_done {};     # dummy to check successful include
+
+=pod
+
+=head1 VERSION
+
+1.34 2021/01/14
+
+=head1 AUTHOR
+
+13-nov-13 Achim Hoffmann
+
+=cut
+
 ## PACKAGE }
 
 # local functions {
@@ -276,6 +282,6 @@ sub o_saft_usr_done {};     # dummy to check successful include
 #_____________________________________________________________________________
 #_____________________________________________________________________ self __|
 
-_main(@ARGV) if (not defined caller);
+_main_usr(@ARGV) if (not defined caller);
 
 1;

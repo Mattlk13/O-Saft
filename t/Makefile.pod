@@ -48,7 +48,7 @@ The sub-headers in this in section are referenced from other Makefile* .
 
 =head1 VERSION
 
-@(#) Makefile.pod 1.33 19/11/22 23:47:03
+@(#) Makefile.pod 1.39 20/11/07 14:30:46
 
 =head1 AUTHOR
 
@@ -64,7 +64,8 @@ Please also  SEE Documentation  in o-saft.pl .
 
 All Makefile* provide a set of targets using a well defined naming convention.
 
-Following examples provide help (documentation) for the available targets:
+Examples (for makefile.tcl)  which provide help (documentation)  for available
+targets:
 
     make
     make help
@@ -72,7 +73,7 @@ Following examples provide help (documentation) for the available targets:
     make help.test.tcl
     make help.test.tcl.all
 
-To just get the list of all targets following can be used (example):
+To just get the list of all targets, following can be used:
 
     make e-ALL.test.tcl
     make s-ALL.test.tcl
@@ -84,6 +85,44 @@ Calling targets:
     make testcmd-tcl--v-host_localhost
 
 
+A common set of variables and targets is provided in all Makefile*. If the
+makefile is named  Makefile.Ext , following variables exist:
+
+    HELP.test.Ext
+    TEST.Ext.hosts
+    ALL.test.Ext
+    ALL.test.Ext.log
+
+and following targets exist:
+
+    help.test.Ext
+    test.Ext
+    test.Ext.log
+
+
+=head2 O-Saft Makefile Example Usage
+
+To show readable (for humans) information about variables and targets from
+a Makefile* itself, see
+
+    make -f t/Makefile.help
+
+To get brief (mainly technical) information about the Makefile, use:
+
+    make -f t/Makefile.cgi
+    make -f t/Makefile.cgi helpt.test.cgi
+    make                   helpt.test.cgi
+    make -f t/Makefile.cgi targets.me
+    make -f t/Makefile.cgi macros.me
+    make -f t/Makefile.cgi s-ALL.test.cgi
+    make -f t/Makefile.cgi p-LIST.cgi.badIP
+    make -f t/Makefile.cgi m-LIST.cgi.badIPv6
+    make -f t/Makefile.cgi e-LIST.cgi.badIPv6
+    make -f t/Makefile.cgi s-LIST.cgi.badIPv6
+
+(Makefile.cgi is an example, may be any other Makefile also).
+
+
 =head1 O-Saft Makefile Limitations
 
 * Requires GNU Make > 2.0.
@@ -91,6 +130,25 @@ Calling targets:
 * Requires GNU awk (gawk)
 
 * Requires GNU sed (for generating target  INSTALL.sh ).
+
+*  Unfortunately some of the macros use variables of the makefile,  like
+   $(T), while other macros must use the TAB character verbatim,  which is
+   difficult to identify by human eyes.
+
+
+=head1 O-Saft Makefile Preconditions
+
+The tools used and tested by make are called in the  $(TEST.dir) directory
+(usually ./t ), but they are located in  ../  (or ../contrib). Some (most)
+tools expect "includes" in  ./ ,  i.e.  o-saft.pl  itself includes private
+modules from  ./NET  and  ./OSaft.  This may result in perl warnings like
+"Can't locate ...".
+
+To avoid this, following symbolic links exist in  $(TEST.dir) :
+
+    ./Net   -> ../Net
+    ./OSaft -> ../OSaft
+    ./osaft.pm -> ../osaft.pm
 
 
 =head1 O-Saft Makefile*
@@ -102,7 +160,7 @@ The Makefile* are located in the  $(TEST.dir)  directory (usually ./t ).
 The default target in each Makefile* simply prints a brief help.
 
 Most included t/Makefiles.*  contain very limited comments. The details of
-their functionality is mainly described herein.
+their functionality is mainly described in this documentation here.
 
 
 =head1 O-Saft Makefile Syntax
@@ -116,6 +174,15 @@ None of them are disabled explicitly.  Therefore some behaviour may depend
 on the local make configuration. SEE  Make:automatic variables  also.
 
 
+=head2 O-Saft Makefile General
+
+To extract and format the texts, the targets use  GNU Make's functionality
+like  $(eval ...), $(foreach ...) and $(shell).
+External tools like  awk,  sed  and  tr  must be used  when information or
+text are to be extracted form other Makefile*.  Each tool  and its command
+arguments are defined as variable, see corresponding  EXE.*  variables.
+
+
 =head2 O-Saft Makefile Includes
 
 All testing functionality is grouped in individual Makefile*. They are all
@@ -127,6 +194,7 @@ included by the main Makefile and organised as follows:
             include t/Makefile.inc
             include t/Makefile.warnings
             include t/Makefile.cmd
+            include t/Makefile.cipher
             include t/Makefile.exit
             include t/Makefile.opt
             include t/Makefile.ext
@@ -135,9 +203,14 @@ included by the main Makefile and organised as follows:
             include t/Makefile.tcl
             include t/Makefile.etc
             include t/Makefile.dev
+            include t/Makefile.pod
             include t/Makefile.php
+            include t/Makefile.init
+            include t/Makefile.make
             include t/Makefile.misc
             include t/Makefile.critic
+            include t/Makefile.docker
+            include t/Makefile.legacy
             include t/Makefile.make
 
 To get a list of all included Makefile* use:
@@ -159,19 +232,17 @@ the  _SID.test  variable.
 
 General rules for our variable and target names in Makefile* are:
 
+* variable names start with uppercase characters or  _
+
 * names consist only of characters a-zA-Z0-9_.-
 
-* names start with upper case letters or _
+* names starting with  _  are intended for internal use
 
-* names starting with _ are intended for internal use
+* names use well defined prefixes which are separated by  .  or  -
 
-* names use well defined prefixes which are separated by  "."  or  "-"
+* names may use variable suffixes which are separated by  _
 
-* names may use variable suffixes which are separated by "_"
-
-* target names only use lowercase characters and . and - and _
-
-* variable names start with uppercase characters or _
+* target names use only lowercase characters and  .  and  -  and  _
 
 Examples:
 
@@ -219,7 +290,7 @@ sometimes necessary to use quotes to enforce the proper evaluation of used
 variables in the text (mainly in target actions).
 
 It is prefered that the complete definition, name=value, fits in one line,
-hoever, huge definitions are splited in multiple lines  for better (human)
+however, huge definitions are splited in multiple lines for better (human)
 readability.
 
 
@@ -240,9 +311,9 @@ system.
 
 Following internal variables in each Makefile* are used:
 
-    _SID        - version in project's Makefile
-    _SID.*      - version in included Makefile*
-    _MYSELF.*   - path of the Makefile itself (in included Makefile*)
+    _SID            - version in project's Makefile
+    _SID.*          - version in included Makefile*
+    _MYSELF.*       - path of the Makefile itself (in included Makefile*)
 
 The  _SID.*  variables are used to check if sub-makefiles were included.
 
@@ -265,23 +336,23 @@ Where  t/Makefile  may include more files.
 
 Following names are used, which potentially conflict with make itself:
 
-    ECHO        - echo command
-    MAKE        - make command
-    MAKEFILE    - Makefile (i.g. myself, but may be redifined)
+    ECHO            - echo command
+    MAKE            - make command
+    MAKEFILE        - Makefile (i.g. myself, but may be redifined)
 
 Following name prefixes are used for variables:
 
-    SRC         - defines a source file
-    GEN         - defines a generated file
-    EXE         - defines tools to be used
-    ALL         - defines summary variables
-    LIST        - defines lists of something
-    TEST        - something related to the t/ directory
-    CONTRIB     - something related to the contrib/ directory
-    CRITIC      - something related to percritic targets
-    HELP        - defines texts to be used in  help  and  doc  targets
-    _           - names of internal (helper) variables (they are not
-                  intended to be overwritten on command line)
+    SRC             - defines a source file
+    GEN             - defines a generated file
+    EXE             - defines tools to be used
+    ALL             - defines summary variables
+    LIST            - defines lists of something
+    TEST            - something related to the t/ directory
+    CONTRIB         - something related to the contrib/ directory
+    CRITIC          - something related to perlcritic targets
+    HELP            - defines texts to be used in  help  and  doc  targets
+    _               - names of internal (helper) variables (they are not
+                      intended to be overwritten on command-line)
 
 Notes about some special variables:
 
@@ -297,7 +368,8 @@ Notes about some special variables:
     ALL.tests.log   - list of all targets for tests writing to logfiles
 
 The variables  ALL.tests  and  ALL.tests.log  are generated in  t/Nakefile
-from the corresponding  ALL.test.TYP  in each  t/Makefile.TYP .
+from the corresponding  ALL.test.TYP  in each  t/Makefile.TYP , where  TYP
+is  cmd, cgi, opt, etc. SEE O-Saft Makefile Includes  also.
 
 
 =head2 O-Saft Makefile Targets
@@ -350,7 +422,7 @@ Example:
     HELP-help       = print overview of all targets
     HELP-doc        = same as help, but evaluates macros
     HELP.typ        = $(_NL)\
-    \# same addition text with more than one line $(_NL)\
+    \# some additional text with more than one line $(_NL)\
     \# other line
 
 These  variables (above) are used by the  help  and  doc  target.  Each of
@@ -360,7 +432,7 @@ these lines is printed as follows:
     help     # print overview of all targets
     doc      # same as help, but evaluates variables
 
-    # same addition text with more than one line
+    # some additional text with more than one line
     # other line
 
 
@@ -373,16 +445,17 @@ features and behaves slightly different to traditional make.
 
 =head2 GNU Make:Terms
 
-Some words about the terms and words used in GNU Make and in this project.
+Some words about the terms and words used in GNU Make in this project.
 
-* macro  is a synonym for  variable  in makefiles.
+* macro  is a synonym for  variable  in makefiles, here the  term variable
+  is prefered.
 
 * GNU Make uses  prerequisites  when targets depend on something, here the
   term dependencies is used.
 
 * GNU Make distinguishes the terms:   explicit rules,  implicit rules  and
   static pattern rules. For simplicity target is used when  explicit rules
-  are meant and  pattern rule  is used for  static pattern rule
+  are meant and  pattern rule  is used for  static pattern rule .
 
 * GNU Make refers to the commands executed in a target as  recipe.
 
@@ -398,11 +471,11 @@ Some words about the terms and words used in GNU Make and in this project.
 * $$ avoids evaluating  $ (the macro) when reading the makefile, but it is
   evaluated when the corresponding target is executed.
 
-* Definition using   =  deferred  definition; macro expanded when used
+* Definition using   =  deferred  definition; macro expanded when used.
 
-* Definition using  :=  immediate definition; macro expanded when defined
+* Definition using  :=  immediate definition; macro expanded when defined.
 
-* Definition using ::=  immediate definition; macro expanded when defined
+* Definition using ::=  immediate definition; macro expanded when defined.
 
 Note that  :=  (traditional GNU Make) is equivalent to  ::=  (POSIX). Only
 :=  is used.
@@ -438,7 +511,8 @@ This avoids sophistcated syntax in the files itself, like:
     endif
 
 GNU Make also cannot manage recursive includes of the same file. This must
-be checked before including, for example (using private _SID.* variable):
+be checked before including. The private  _SID.* variable, which is set in
+all Makefile*, is used, example:
 
     ifeq (,$(_SID.test))
         -include t/Makefile
@@ -452,16 +526,16 @@ Missing the required file is silently ignored using  -include  directive.
 Remember important variables:
 
     $(MAKE)         - the make command itself, in sub-make with additional
-                      arguments/options (see make's dosumentation )
+                      arguments/options (see make's documentation )
     $(MAKE_COMMAND) - private variable for the make command, without other
                       arguments/options as in $(MAKE)
                       SEE Make:MAKE vs. MAKE_COMMAND
     $(MFLAGS)       - contains all passed arguments/options to make
-    $(MAKEFLAGS)    - same as $(MFLAGS) but omitts leading - character
+    $(MAKEFLAGS)    - same as $(MFLAGS) but omitts leading  -  character
     $(MAKECMDGOALS) - name of the target to be satisfied
     $(MAKEFILE)     - name of the target to be satisfied
     $(MAKEFILES)    - environment variable containing makefiles to be read
-    $(MAKEFILE_LIST)- inclueded Makefiles in the order they have been read
+    $(MAKEFILE_LIST)- included Makefiles in the order they have been read
 
 For details use: make help.test.make
 
@@ -478,7 +552,7 @@ Remember GNU Make's automatic variables:
     $^    - all dependencies of the target (without duplicates)
     $<    - first dependency of the target
     $?    - dependencies newer than the target
-    $|    - "orde-only" dependencies
+    $|    - "order-only" dependencies
     $*    - matching files of the rule
     $%    - target (archive) member name (rarely used)
 
@@ -674,13 +748,13 @@ To avoid diffs when testing with  *.log  targets, output of such keys must
 be ignored for  all targets with  +info ,  +check  or any other  combining
 commands (like  +hsts). Output such keys can be ignored using  o-saft.pl's
 option  --ignore-output=  (alias  --no-out=). Alias  --no-out=  is used to
-keep the command line shorter.
+keep the command-line shorter.
 
 The variable  _ignore-output  (computed from _ignore-output-keys) contains
 these keys (commands). This variable should be used whenever such commands
 are tested.
 
-Unfortunatelly this  results in  untested commands,  those defined  in the
+Unfortunately  this  results in  untested commands,  those defined  in the
 variable  _ignore-output-keys . An additional target  should exist to test
 these commands also.
 
@@ -722,16 +796,25 @@ Hence following simplified  if-then-else  construct is used:
 Note that  $(MAKEFLAGS)  may look like:  nrR --no-print-directory
 
 
+=head2 Make:Perl::Analyzer
+
+For generating documentation of the own Perl modules and a calling tree of
+them, perl-analyzer is used. The tools require the Perl modules  JSON  and
+Text::MicroTemplate  (beside some mor commonly installed Perl modules).
+
+
 =head2 Make:Profiling
 
 Profiling is mainly done with Perl's built-in functionality: perldebug.
 
-There are also targets using the Perl modules  DProf and/or NYTProf  to do
-the profiling.
+There are also targets which require the Perl modules  Devel::DProf and/or
+Devel::NYTProf  to do the profiling.
 
 =head3 Perl packages
 
+  * debian: libdevel-trace-perl libdebug-trace-perl
   * debian: libdevel-dprof-perl libdevel-nytprof-perl
+  * debian: libjson-perl libtext-microtemplate-perl
 
 
 =head2 Make:profile.sub
@@ -825,6 +908,26 @@ This is done using (see above):
        make profile.sub.args-+cn DEV.pl=../yeast.pl
 
 
+=head2 Make:podchecker
+
+podchecker  complains if a  =head*  section has no text like:
+
+       *** WARNING: empty section in previous paragraph at line ...
+
+for example if it's followed by the next  =head*  section. Such situations
+are intended when aliases are described, for example:
+
+       =head3 +sts
+
+       =head3 +hsts
+
+podchecker's warning can be avoided, when there is no empty line after the
+first  =head*  line. On the other hand,  POD syntax requires an empty line
+after each  =head*  line. This is considered a bug in podchecker.
+This applies to Pod::Checker <= 1.73  (as podchecker is just a wrapper for
+Pod::Checker).
+
+
 =head2 Make:OSAFT_MAKE
 
 Some data printed by the tools are  random,  means that they are different
@@ -832,7 +935,7 @@ for each call of the tool, for example date and time.
 If these tools are called by make and the results are written to a logfile
 which will be compared with a previous logfile, these files always differ.
 To avoid this difference (because of random text) a dummy constant text is
-written if our special environment variable  OSAFT_MAKE  exits.
+written if our special environment variable  OSAFT_MAKE  exists.
 This environment variable should be set in Makefile*.
 
 A generic text is available as  STR_MAKEVAL  (see osaft.pm). In some cases
@@ -880,7 +983,7 @@ but logfiles to identify differences.
 
 =head2 Troubleshooting
 
-To parametrize targets in various ways,  they make heavy use of variables.
+To parametrise targets in various ways,  they make heavy use of variables.
 Some of the variables are set conditionally for targets and pattern rules.
 
 If things go wrong, or results are unexpected, following steps may help to

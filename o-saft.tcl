@@ -3,7 +3,7 @@
 exec wish "$0" ${1+"$@"}
 
 #!#############################################################################
-#!#             Copyright (c) 2019, Achim Hoffmann, sic[!]sec GmbH
+#!#             Copyright (c) 2021, Achim Hoffmann
 #!#----------------------------------------------------------------------------
 #!# If this tool is valuable for you and we meet some day,  you can spend me an
 #!# O-Saft. I'll accept good wine or beer too :-). Meanwhile -- 'til we meet --
@@ -44,14 +44,14 @@ exec wish "$0" ${1+"$@"}
 #?      filter can be modified and extended in the  Filter TAB.
 #?      All results and settings (commands and options) can be saved to files.
 #?
-#?      Can be used to read saved results from other calls of o-saft.pl.
+#?      It can be used to read saved results from other calls of o-saft.pl.
 #?
-#?      Any argument starting with  +  are condidered a command for  o-saft.pl
+#?      Any argument starting with  +  are considered a command for  o-saft.pl
 #?      and  o-saft.pl  will be started with all other  options,  commands and
 #?      targets and show the results in the GUI.
 #?
 #?   Result TAB
-#?      The result of  o-saft.pl  are shown in a new TAB.  The format (layout)
+#?      The results of  o-saft.pl  are shown in a new TAB. The format (layout)
 #?      of the result can be simple "text" or "table".  This can be configured
 #?      in the  Options TAB.
 #?
@@ -72,10 +72,10 @@ exec wish "$0" ${1+"$@"}
 #?        Saving the result will save the complete text.
 #?
 #?   Help
-#?      All functionallity is documented with balloon help on each checkbutton,
+#?      All functionality is documented with balloon help on each checkbutton,
 #?      input field, button or table header line.
 #?
-#?   Examples for filter
+#?   Examples for Filter
 #?      Match complete line containing Certificate:
 #?         r=1 e=0 #=0 Regex=Certificate
 #?      Match word Target:
@@ -85,7 +85,7 @@ exec wish "$0" ${1+"$@"}
 #?
 #?   Configuration
 #?      Some parts of the GUI, for example widget fonts or widget label texts,
-#?      can be customized in  .o-saft.tcl , which  will be searched for in the
+#?      can be customised in  .o-saft.tcl , which  will be searched for in the
 #?      user's  HOME directory  and in the local directory.
 #?      Please see  .o-saft.tcl  itself for details. A sample  .o-saft.tcl  is
 #?      available in the contrib/ directory.
@@ -134,8 +134,8 @@ exec wish "$0" ${1+"$@"}
 #?      The search pattern can be used in following modes:
 #?        exact - use pattern as literal text
 #?        regex - use pattern as regular expression (proper syntax required)
-#?        smart - convert pattern to regex: each character may be optional
-#?        fuzzy - convert pattern to regex: each position may be optional
+#?        smart - convert pattern to RegEx: each character may be optional
+#?        fuzzy - convert pattern to RegEx: each position may be optional
 #?      Example:
 #?        exact:  (adh|dha) - search for literal text  (adh|dha)
 #?        regex:  (adh|dha) - search for word  adh  or  word  dha
@@ -144,16 +144,16 @@ exec wish "$0" ${1+"$@"}
 #?        smart:  and       - search for  and  or  a?nd  or  an?d  or  and?
 #?        fuzzy:  and       - search for  and  or  .?nd  or  a.?d  or  an.?
 #?
-#?      Note: regex are applied to lines only, pattern cannot span more than a
+#?      Note: RegEx are applied to lines only, pattern cannot span more than a
 #?            single line.
 #?      The pattern must have at least 4 characters, except for mode "exact".
 #?
 #?      The GUI contains various [?] buttons. Clicking such a button will show
-#?      the corresponding section in the help window  context sensitive).
+#?      the corresponding section in the help window (context sensitive).
 #?
 #? OPTIONS
 #?      --h     print this text
-#?      --help=opts print options ((for compatibility with o-saft.pl)
+#?      --help=opts print options (for compatibility with o-saft.pl)
 #?      --v     print verbose messages (calling external tools)
 #?      --d     print more verbose messages (for debugging)
 #?      --d=D   print debug messages according level
@@ -161,14 +161,17 @@ exec wish "$0" ${1+"$@"}
 #?              D=2     - print proc calls (those not triggerd by events)
 #?              D=4     - print debugging in proc
 #?              D=8     - print verbose debugging for "help" window
-#?              values can combined, like --d=6 for print procs and data there
+#?              values can be combined, like  --d=6  to print procs and data,
 #?              all  --d=*  imply  --v
 #?      --rc    print template for .o-saft.tcl
+#?      --no-docs   use configuration texts from o-saft.pl instead of static files
 #?      --text  use simple texts as labels for buttons
 #?      --img   use images as defined in o-saft-img.tcl for buttons
 #?              (not recommended on Mac OS X, because Aqua has nice buttons)
+#?      --pod   use podviewer to show help text
 #.      --tip   use own tooltip
 #.      --trace use Tcl's trace to trace proc calls
+#?      --stdin read data from STDIN and show in result TAB
 #?      --load=FILE read FILE and show in result TAB
 #?      --id=ID     use Docker image ID (registry:tag); default: owasp/o-saft
 #?      --tag=TAG   use Docker image ID with tag; default: (empty)
@@ -177,19 +180,21 @@ exec wish "$0" ${1+"$@"}
 #?      --version   print version number
 #.      +VERSION    print version number (for compatibility with o-saft.pl)
 #.      +quit       exit without GUI (for compatibility with o-saft.pl)
-#.      --test-osaft    - just print text used for help window (help button)
+#?      --test=FILE read FILE and print on STDOUT; used for testing only
+#.      --test-tcl  just print debug information; same as: --d +quit
+#.      --test-osaft    just print text used for help window (help button)
 #?
 #? DOCKER
 #?      This script can be used from within any Docker image. The host is then
 #?      responsible for providing the proper protocols for the GUI (i.e. X11).
 #?      In this case,  anything is executed inside the Docker image,  just the
-#?      graphical output is passed to the host. This mode is started with
-#?          o-saft-docker gui
+#?      graphical output is passed to the host. This mode is started with:
+#?          o-saft-docker --gui
 #?      which does the necessary magic with Docker for protocol and DISPLAY.
 #?
 #?      When used with the  --docker  option, this script runs on the host and
-#?      connects to an O-Saft Docker image to execute o-saft.pl there with all
-#?      the selected commands and options.
+#?      connects to an  O-Saft Docker image  to execute  o-saft.pl  there with
+#?      all the selected commands and options.
 #?      In this mode,  o-saft-docker  will be used instead of o-saft.pl, which
 #?      must be available on the host.
 #?      Note that  o-saft-docker  relies on O-Saft's Docker image osawp/o-saft
@@ -199,7 +204,7 @@ exec wish "$0" ${1+"$@"}
 #?
 #?      Summary
 #?          o-saft.tcl --docker     - run on host using o-saft.pl in Docker
-#?          o-saft-docker gui       - run in Docker with display to host
+#?          o-saft-docker --gui     - run in Docker with display to host
 #?
 #? KNOWN PROBLEMS
 #?      Using option  -v  causes a Tcl error, like:
@@ -214,7 +219,7 @@ exec wish "$0" ${1+"$@"}
 #?      them, just "highlight" texts of the results.
 #?
 #?      All  --cfg-*  settings from .o-saft.pl are not handled properly in the
-#?      GUI herein.
+#?      GUI herein, in particular when texts are changed with this option.
 #?
 #?      The busy cursor does not work on Win32 and Win64 systems.
 #?
@@ -224,6 +229,11 @@ exec wish "$0" ${1+"$@"}
 #?          X Error of failed request:  BadAlloc (insufficient resources for operation)
 #?      There exist configurations as workaround to avoid such errors, see:
 #?          cfg(max53)
+#?
+#?      To pipe data in on STDIN, the option  --stdin  must be used, otherwise
+#?      it will not be read.
+#?
+#?      STDIN  and  _LOAD  as filenames can not be used to load data.
 #?
 #? ARGUMENTS
 #?      All arguments,  except the options described above,  are treated  as a
@@ -236,8 +246,8 @@ exec wish "$0" ${1+"$@"}
 #. LAYOUT
 #.           +---------------------------------------------------------------+
 #.       (H) | Host:Port [________________________________________]  [+] [-] |
-#.           |                                                           [!] |
-#.       (C) | [Start] [+info] [+check] [+cipher] [+quick] [+vulns]      [?] |
+#.           |                                                       [!] [?] |
+#.       (C) | [Start] [+info] [+check] [+cipher] [+quick] [+vulns]   [Load] |
 #.       (O) | [ ] --header  [ ] --enabled  [ ] --no-dns  [ ] -no-http  ...  |
 #.           |---------------------------------------------------------------|
 #.           | +----------++---------++----------++----------+               |
@@ -285,13 +295,16 @@ exec wish "$0" ${1+"$@"}
 #. LIMITATIONS
 #.
 #. HACKER's INFO
-#.   TODO (7/2017):
-#.      - "docker status" button is a quick&dirty hack
 #.   TODO (8/2016):
 #.      - need to check if ugly hacks for Aqua (Mac OS X 10.6  with  Tk 8.5.7)
 #.        are still necessary on modern Macs, in particular:
 #.        * tk_getSaveFile -confirmoverwrite
 #.        * package require Img
+#.
+#.      This is no academically perfect code, but quick&dirty scripted:
+#.       - makes use of global variables instead of passing parameters etc..
+#.       - mixes layout and functions and application logic
+#.       - some widget names are hardcoded
 #.
 #.   Data Used to Build GUI
 #.      Generation of all objects (widgets in Tk slang) is done  based on data
@@ -324,7 +337,7 @@ exec wish "$0" ${1+"$@"}
 #.          - all  "--help*"  options (as they make no sense here)
 #.          - "+cgi"  and  "+exec"  command (they are for internal use only)
 #.
-#.   Some Nameing Conventions
+#.   Some Naming Conventions
 #.       - procedures:
 #.          create_*    - create widget or window
 #.          osaft_*     - run external  o-saft.pl  (and process output)
@@ -335,6 +348,8 @@ exec wish "$0" ${1+"$@"}
 #.          txt         - a text widget
 #.          w  or  obj  - any widget
 #.          parent      - parent widget (may be toplevel)
+#.          exe()       - global variable containing commands and options for
+#.                        o-saft.pl
 #.          cfg()       - global variable containing most configurations
 #.          cfg_colors()- global variable containing colours for widgets
 #.          cfg_texts() - global variable containing texts for widgets
@@ -355,13 +370,13 @@ exec wish "$0" ${1+"$@"}
 #.                      - lines are used for internal developer documentation
 #.          lines with  ;#
 #.                      - Tcl requires a  ;  after the statement before any
-#.                        comment; the  ; is usually right before the  #
+#.                        comment; the  ;  is usually right before the  #
 #.
-#.   Codeing (general)
+#.   Coding (general)
 #.      Sequence of function definitions done to avoid forward declarations.
 #.      See  Debugging Options  below also.
 #.
-#.   Codeing (GUI)
+#.   Coding (GUI)
 #.      Images (i.e.for buttons) are defined in  o-saft-img.tcl, which must be
 #.      installed in same path as  o-saft.tcl  itself.  The definitions are in
 #.      a separate file to keep the code more clean herein.
@@ -373,51 +388,89 @@ exec wish "$0" ${1+"$@"}
 #.      own "Copy Text" (see above) with <Control-ButtonPress-1>,  even if the
 #.      button is displayed as image.
 #.
-#.   Traceing (GUI)
-#.      Tcl's  trace  functionality is used to trace most procs defined herein
-#.      and all created buttons.  See trace_commands() and trace_buttons() for
-#.      details. Tracing does not yet work for buttons created in sub-windows.
-#.      Traceing is invoked with  --trace  option.
+#.   STDIN
+#.      Tcl's file handle (channel) for STDIN is named stdin, which is open by
+#.      default. Data piped to  $0  can be read from this file handle.
+#.      But it is difficult to detect if data is available from stdin, if not,
+#.      Tcl's  get()  function simply hangs. To avoid this, the option --stdin
+#.      must be used if data should be read from STDIN, example:
+#.          cat some-file | $0 --stdin
+#.          o-saft.pl +check localhost   | $0 --stdin
+#.      Reading from STDIN can simply be tested like
+#.          echo "label: no any comment" | $0 --stdin
 #.
-#.   Traceing (program flow)
+#.      Note that STDIN is used as filename to indicate that Tcl's stdin  file
+#.      handle should be used (which needs to be treated special).
+#.
+#.   Tracing (GUI)
+#.      Tcl's  trace  functionality is used to trace most procs defined herein
+#.      and all created buttons. See  trace_commands() and trace_buttons() for
+#.      details. Tracing does not yet work for buttons created in sub-windows.
+#.      Tracing is invoked with the  --trace  option.
+#.
+#.   Tracing (program flow)
 #.      --d=X         - see description above
 #.
-#.   Traceing and Debugging
-#.      All output for --trace and/or --dbx is printed on STDERR.
+#.   Tracing and Debugging
+#.      All output for  --trace  and/or  --dbx  is printed on STDERR.
 #.      Trace messages are prefixed with:   #[$0]:
 #.      Debug messages are prefixed with:   #dbx [$0]:
 #.
+#.      --test=FILE
+#.      --test=FILE --layout=text
+#.      --test=FILE --layout=table
+#.          loads FILE into the GUI's tablelist widget and then calls the save
+#.          function, which prints the content of tablelist on STDOUT.
+#.          This is used in Makefile* for testing functionality, does not make
+#.          any sense otherwise.
+#.          The  --layout=*  option enforces storing the file, content in Tk's
+#.          tablelist or text widget. The output may be slightly different, as 
+#.          the tablelist does not always contain all data of the file.
+#.
+#.
+#.   Tracing and Debugging with Alias Names
+#.      If arguments (options) can not be passed to the script, alias names of
+#.      the script can be used to simulate passed options:
+#.      # alias name            # behaves as called like
+#.      #-----------------------#-------------------------------
+#.      o-saft--testtcl.tcl     $0 --test-tcl
+#.      o-saft--d.tcl           $0 --d
+#.      o-saft--trace.tcl       $0 --trace
+#.
 #.   Notes About Tcl/Tk
-#.      We try to avoid platform-specific code. The only exceptions (2015) are
-#.      the perl executable and the start method of the external browser.
+#.      We try to avoid platform-specific code. The only exceptions since 2015
+#.      are the perl executable and the start method of the external browser.
 #.      Another exception (8/2016) is "package require Img" which is necessary
 #.      on some Mac OS X.
 #.      All external programs are started using Tcl's  {*}  syntax.
+#.
 #.      If there is any text visible, we want to copy&paste it. Therefore most
 #.      texts are placed in Tk's text widget instead of a label widget, 'cause
 #.      text widgets allow selecting their content by default, while labels do
 #.      not. These text widgets are set to state "read-only"  instaed of Tcl's
 #.      disabled state, see gui_set_readonly() for details.
 #.
-#.      This is no academically perfect code, but quick&dirty scripted:
-#.       - makes use of global variables instead of passing parameters etc..
-#.       - mixes layout and functions and application logic
-#.       - some widget names are hardcoded
-#.
 #? VERSION
-#?      @(#) 1.228 Summer Edition 2019
+#?      @(#) 1.253 Spring Edition 2021
 #?
 #? AUTHOR
-#?      04. April 2015 Achim Hoffmann (at) sicsec de
+#?      04. April 2015 Achim Hoffmann
 #?
 #?      Project Home: https://www.owasp.org/index.php/O-Saft
 #?      Help Online:  https://www.owasp.org/index.php/O-Saft/Documentation
+#?                    https://wiki.owasp.org/index.php/O-Saft/Documentation
 #?      Repository:   https://github.com/OWASP/O-Saft
 #?
 # -----------------------------------------------------------------------------
 
-package require Tcl     8.5
-package require Tk      8.5
+set cfg(testtcl) 0
+#package require Tcl     8.5    ;# for documentation only
+#package require Tk      8.5    ;# modern Tcl/Tk doesn't need it anymore
+if {![regexp -- {--test-?tcl} $argv]} {
+    # keep some systems quiet
+    package require Tk
+    set cfg(testtcl) 1
+}
 
 #_____________________________________________________________________________
 #___________________________________________________________ early bindings __|
@@ -431,13 +484,15 @@ package require Tk      8.5
 # might be defined later in the code, but it must be done before any usage.
 # Hence it's defined right below.
 
-foreach klasse [list  Button  Combobox  Entry  Label  Text Message Spinbox \
-                     TButton TCombobox TEntry TLabel TText Frame Menu \
-                     LabelFrame  PanedWindow Scale Scrollbar \
-                     Checkbutton Menubutton  Radiobutton Dialog] {
-    bind $klasse  <Control-ButtonPress-1>       { copy2clipboard %W 0 }
-    bind $klasse  <Shift-Control-ButtonPress-1> { copy2clipboard %W 1 }
-
+if {0==$cfg(testtcl)} {
+    # do not bind in debug-only mode to avoid errors
+    foreach klasse [list  Button  Combobox  Entry  Label  Text Message Spinbox \
+                         TButton TCombobox TEntry TLabel TText Frame Menu \
+                         LabelFrame  PanedWindow Scale Scrollbar \
+                         Checkbutton Menubutton  Radiobutton Dialog] {
+        bind $klasse  <Control-ButtonPress-1>       { copy2clipboard %W 0 }
+        bind $klasse  <Shift-Control-ButtonPress-1> { copy2clipboard %W 1 }
+    }
 }
 
 proc copy2clipboard {w shift} {
@@ -465,6 +520,7 @@ proc copy2clipboard {w shift} {
        TText        { append txt [string trim [$w get 1.0 end]]; }
        default      { puts "** unknown class $klasse" }
     }
+    if {$shift==1} { append txt "\n -command [lindex [$w config -command] 4]" }
     putv "copy2clipboard($w, $shift): {\n $txt\n#}"
     clipboard clear
     clipboard append -type STRING -format STRING -- $txt
@@ -473,12 +529,32 @@ proc copy2clipboard {w shift} {
 #_____________________________________________________________________________
 #____________________________________________________________ configuration __|
 
+proc config_docker  {mode}  {
+    #? initilise configuration for use with Docker image
+    #  may be called with $mode=opt for --docker option or with $mode=prg to
+    #  check if program name matches *-docker
+    #  must be early definition, because called right after program start
+    global cfg prg env argv0
+    switch $mode {
+       prg { if {[regexp {\-docker$} $argv0]} { set mode 1; } }
+       opt { set mode 1; }
+    }
+    if {1==$mode} {
+        set cfg(docker)  1;
+        set prg(SAFT)    "o-saft-docker";
+    }
+    # independent of mode, can always be set
+    if {1==[info exists env(o_saft_docker_tag)] } { set prg(docker-tag) $env(o_saft_docker_tag);  }
+    if {1==[info exists env(o_saft_docker_name)]} { set prg(docker-id)  $env(o_saft_docker_name); }
+    return
+}; # config_docker
+
 if {![info exists argv0]} { set argv0 "o-saft.tcl" };   # if it is a tclet
 
-set cfg(SID)    "@(#) o-saft.tcl 1.228 19/11/25 23:25:20"
-set cfg(mySID)  "$cfg(SID) Spring Edition 2019"
+set cfg(SID)    "@(#) o-saft.tcl 1.253 21/05/02 11:28:18"
+set cfg(mySID)  "$cfg(SID) Spring Edition 2021"
                  # contribution to SCCS's "what" to avoid additional characters
-set cfg(VERSION) {1.228}
+set cfg(VERSION) {1.253}
 set cfg(TITLE)  {O-Saft}
 set cfg(RC)     {.o-saft.tcl}
 set cfg(RCmin)  1.13                   ;# expected minimal version of cfg(RC)
@@ -487,18 +563,27 @@ set cfg(DIR)    [file dirname $argv0]  ;# directory of cfg(ICH)
 set cfg(ME)     [info script]          ;# set very early, may be missing later
 set cfg(IMG)    {o-saft-img.tcl}       ;# where to find image data
                                         # O-Saft means built-in
+set cfg(O-Saft) {o-saft.pl}            ;# common name of O-Saft executable
+                                        # constant also used for filenames
+set cfg(POD)    {o-saft.pod}           ;# complete help text in POD format
 set cfg(HELP)   ""                     ;# O-Saft's complete help text
 set cfg(files)  {}                     ;# files to be loaded at startup --load
 set cfg(.CFG)   {}                     ;# contains data from prg(INIT)
                                        ;# set below and processed in osaft_init
 set cfg(quit)   0                      ;# quit without GUI
+set cfg(stdout) 0                      ;# 1: call osaft_save TTY
+set cfg(docker) 0                      ;# 1: for --docker option or o-saft-docker
 #et cfg(HELP-key) ""                   ;# contains linenumber of result table
+set cfg(docs-dir)   $cfg(DIR)/docs     ;# directory where to find documentation
+                                        # may be redifined in RC-file
 
 #-----------------------------------------------------------------------------{
 #   Definitions outside RC-ANF - RC-END scope, because they're not intended to
 #   be changed in .o-saft.tcl .
-#
-#   define some regex to match output from o-saft.pl or data in .o-saft.pl
+
+#et exe()  ... # will contain commands and options to call prg(SAFT)
+
+#   define some RegEx to match output from o-saft.pl or data in .o-saft.pl
 #   mainly used in create_win() and create_buttons()
 set prg(DESC)   {-- CONFIGURATION regex to match output from o-saft.pl -------}
 set prg(rexCMD-int)  {^\+(cgi|exec)}   ;# internal use only
@@ -514,7 +599,7 @@ set prg(rexOUT-show) {^Commands to show }  ;# commands without explizit HELP sec
     # causes problems in regsub on Mac OS X if $prg(SAFT) starts with ./
 set prg(rexCOMMANDS) "\(o-saft\(.pl|.tcl|-docker\)?|checkAllCiphers.pl|\(/usr/local/\)?openssl|docker|mkdir|ldd|ln|perlapp|perl2exe|pp\)"
     # most common tools used in help text...
-set prg(post)   {}             ;# --post=  parameter, if passed on command line
+set prg(post)   {}             ;# --post=  parameter, if passed on command-line
 set prg(option) 0  ;# set to 1 to avoid internal "option add ..." commands
 #-----------------------------------------------------------------------------}
 
@@ -562,9 +647,10 @@ set prg(DESC)   {-- CONFIGURATION default buttons and checkboxes -------------}
 set prg(Ocmd)   {{+check} {+cipher} {+info} {+quick} {+protocols} {+vulns}};
     # List of quick access commands, for which a button will be created in the
     # GUI. This must be commands of o-saft.pl, which start with  +  character.
+    # +quit  and  +version  will be added for  --v  or  --d  only.
 set prg(Oopt)   {{--header} {--enabled} {--no-dns} {--no-http} {--no-sni} {--no-sslv2} {--no-tlsv13}};
-    # List of quick access options,  for which a button will be created in the
-    # GUI. This must be options of o-saft.pl, which start with  --  character.
+    # List of quick access options,  a checkbox will be created in the GUI.
+    # This must be options of o-saft.pl, which start with  --  character.
 
 set myX(DESC)   {-- CONFIGURATION window manager geometry --------------------}
 #   set minimal window sizes to be usable in a 1024x768 screen
@@ -578,7 +664,7 @@ set myX(geoA)   "660x610"      ;# geometry and position of About     window
 set myX(geoF)   ""             ;# geometry and position of Filter    window (computed dynamically)
 set myX(geoT)   ""             ;#
 set myX(minx)   700            ;# O-Saft  window min. width
-set myX(miny)   780            ;# O-Saft  window min. height
+set myX(miny)   850            ;# O-Saft  window min. height
 set myX(lenl)   15             ;# fixed width of labels in Options window
 set myX(rpad)   15             ;# right padding in the lower right corner
 set myX(padx)   5              ;# padding to right border
@@ -588,7 +674,7 @@ set cfg(bstyle) {image}        ;# button style:  image  or  text
 set cfg(layout) {table}        ;# layout o-saft.pl's results:  text  or  table
                                 # see also comment in gui_init()
 set cfg(tfont)  {flat9x6}      ;# font used in tablelist::tablelist
-set cfg(max53)  4090           ;# max. size of text to be stored in table columns
+set cfg(max53)  4050           ;# max. size of text to be stored in table columns
 #   Some combinations of Tcl/Tk and X-Servers are limited in the size of text,
 #   which can be stored in Tk's table columns. When such a widget is rendered,
 #   the script crashes with following error message:
@@ -599,31 +685,28 @@ set cfg(max53)  4090           ;# max. size of text to be stored in table column
 #   To avoid the crash, large texts (greater than this value) can be stripped.
 #   The default value of ~4000 is based on experience.
 
-# RC-END }
+set cfg(docs-exe)   0          ;# 0: read configuration of commands and options
+                                #    from static files in ./docs/
+                                # 1: read configuration using o-saft.pl
 
-if {[info exists env(o_saft_docker_tag)] ==1} { set prg(docker-tag) $env(o_saft_docker_tag);  }
-if {[info exists env(o_saft_docker_name)]==1} { set prg(docker-id)  $env(o_saft_docker_name); }
+set cfg(DESC)   {-- CONFIGURATION misc settings ------------------------------}
+
+# RC-END }
+set cfg(docs-files) {}         ;# contains the read files from ./docs/
+
+config_docker prg              ;# may initialise some docker-specific settings
 
 catch {
-  set fid [open $prg(INIT) r]
-  set cfg(.CFG) [read $fid];    close $fid; # read .o-saft.pl
+    set fid [open $prg(INIT) r] ;# read .o-saft.pl
+    set cfg(.CFG) [read $fid]
+    close $fid
 }
 
 #| configure GUI
 
 set cfg(TIP)    [catch { package require tooltip} tip_msg];  # 0 on success, 1 otherwise!
 
-set IMG(!) [image create photo -data {
-  R0lGODlhGAAYAOMOAAAAAAARAQASAQASAgATAQATAgBwLgCBNgCBNwCCNQCCNgCCNwCDNiZ/AP//
-  /////yH5BAEKAA8ALAAAAAAYABgAAASE8MlJq6o4W3W1fwvHfZ6oLKRmfkKLmcnTDlRrv6IEBC0g
-  2YXMStf7CWiPnETUqAl8suNylFROilHkanh9GpEME9cInU3EVvJ3gkB3umXppCHGYM2UeuUuP4/V
-  WRUJHAcZfEgpgHh5b3teUYsmTV1YBDYCfhwGTlgTA4iSFANQJAccKB8RADs=
-}]; # [!] 24x24
-
 set IMG(help) ::tk::icons::question
-if { [regexp {::tk::icons::question} [image names]] == 0} { unset IMG(help); }
-    # reset if no icons there, forces text (see cfg_buttons below)
-
 #et IMG(...)                   ;#  other images are defined in cfg(IMG)
 
 #et myX(minx)  myX(miny)  myX(geoS)     # see gui_init() below
@@ -637,8 +720,10 @@ set myX(buffer) PRIMARY        ;# buffer to be used for copy&paste GUI texts
                                 #         <Btn2Up>: insert-selection(PRIMARY,CLIPBOARD) \
                                 #         ... \
 
-set my_bg       "[lindex [. config -bg] 4]"    ;# default background color
+set my_bg       #d9d9d9        ;# default background color (lightgray)
                                 # this colour is used for buttons too
+                                # default background of Tk widget (if available)
+catch { set my_bg "[lindex [.i config -bg] 4]" }
 
 # define all buttons used in GUI
     # Following table defines the  label text, background colour, image and tip
@@ -650,6 +735,7 @@ set my_bg       "[lindex [. config -bg] 4]"    ;# default background color
     # simple theme (just text and background) or a more sexy one using images.
     # Note:   the key (object name) in following table must be the last part of
     #         the object (widget) name of the button, example: .f.about  .
+    # Note:   should be used after calling gui_init
 
     #----------+---------------+-------+-------+-------------------------------
     # object    button text colour   image      help text (aka tooltip)
@@ -679,26 +765,26 @@ array set cfg_buttons "
     {helpreset} {{Reset}    $my_bg  reset       {Reset/clear list of search texts}}
     {helpsearch}  {{??}     $my_bg  helpsearch  {Text to be searched}}
     {cmdstart}  {{Start}    yellow  cmdstart    {Execute $prg(SAFT) with commands selected in 'Commands' tab}}
-    {cmdcheck}  {{+check}   #ffd800 +check    {Execute $prg(SAFT) +check   }}
-    {cmdcipher} {{+cipher}  #ffd000 +cipher   {Execute $prg(SAFT) +cipher  }}
-    {cmdinfo}   {{+info}    #ffc800 +info     {Execute $prg(SAFT) +info    }}
-    {cmdquit}   {{+quit}    #ffc800 +quit     {Execute $prg(SAFT) +quit (debugging only)}}
-    {cmdquick}  {{+quick}   #ffc000 +quick    {Execute $prg(SAFT) +quick   }}
+    {cmdcheck}  {{+check}   #ffd800 +check      {Execute $prg(SAFT) +check   }}
+    {cmdcipher} {{+cipher}  #ffd000 +cipher     {Execute $prg(SAFT) +cipher  }}
+    {cmdinfo}   {{+info}    #ffc800 +info       {Execute $prg(SAFT) +info    }}
+    {cmdquit}   {{+quit}    #ffc800 +quit       {Execute $prg(SAFT) +quit (debugging only)}}
+    {cmdquick}  {{+quick}   #ffc000 +quick      {Execute $prg(SAFT) +quick   }}
     {cmdprotocols} {{+protocols} #ffb800 +protocols {Execute $prg(SAFT) +protocols }}
-    {cmdvulns}  {{+vulns}   #ffb000 +vulns    {Execute $prg(SAFT) +vulns   }}
-    {cmdversion} {{+version} #fffa00 +version {Execute $prg(SAFT) +version }}
-    {docker_status} {{docker status} #00faff status  {Execute $prg(SAFT) status   }}
+    {cmdvulns}  {{+vulns}   #ffb000 +vulns      {Execute $prg(SAFT) +vulns   }}
+    {cmdversion} {{+version} #fffa00 +version   {Execute $prg(SAFT) +version }}
+    {docker_status} {{docker status} #00faff docker_status {Execute $prg(SAFT) status   }}
     {img_txt}   {{image/text} $my_bg {img_txt}  {toggle buttons: text or image}}
 ";  #----------+-----------+-------+-----------+-------------------------------
 
     # Note: all buttons as described above,  can be configured also by the user
     # using  cfg(RC).  Configurable are:  text (-text), background colour (-bg)
-    # and the tooltip. Because configuering the above table is a bit cumbersome
+    # and the tooltip.  Because configuring the above table is a bit cumbersome
     # for most users, we provide simple lists with key=value pairs. These lists
     # are: cfg_colors, cfg_texts and cfg_tipps. The settings here are defaults,
     # and may be redefined in cfg(RC) using  cfg_color, cfg_label and cfg_tipp.
     # These lists (arrays in Tcl terms) contain not just the button values, but
-    # also values for other objects.  So the lists are initialized here for all
+    # also values for other objects.  So the lists are initialised here for all
     # other values, and then the values from cfg_buttons are added.
     #
     # array in cfg(RC)  array herein   (see also update_cfg() )
@@ -792,6 +878,16 @@ proc _get_image   {key} { global cfg_images;  return $cfg_images($key) };
 proc _get_padx    {key} { global myX;         return $myX($key)        };
     #? return padx value for key from global myX variable
 
+proc _message     {icon title txt} {
+    # print message, either with GUI or on STDERR
+    if {""==[info commands tk_messageBox]} {
+        puts stderr "# $icon: $title #\n$txt"
+    } else {
+        tk_messageBox -icon $icon -title "$title" -message "$txt"
+    }
+    return
+};# _message
+
 if {[regexp {indows} $tcl_platform(os)]} {
     # Some platforms are too stupid to run our executable prg(SAFT) directly,
     # they need a proper  perl executable to do it. Check for perl.exe in all
@@ -811,6 +907,12 @@ if {[regexp {indows} $tcl_platform(os)]} {
         set prg(PERL) [tk_getOpenFile -title "Please choose perl.exe" ]
     }
 }
+if {1==[info exists env(ANDROID_DATA)]} {
+    # dirty hack to detect Android and adapt configuration
+    set cfg(bstyle)   "text" ;# text by default, because icons are too small
+    set prg(PERL)     /data/data/com.termux/files/usr/bin/perl
+        # FIXME: not working for all perl installations on Android
+}
 # NOTE:  as Tcl is picky about empty variables, we have to ensure later, that
 # $prg(PERL) is evaluated propperly,  in particular when it is empty.  We use
 # Tcl's  {*}  evaluation for that.
@@ -822,9 +924,11 @@ if {![regexp {^\d\d\.\d\d\.\d\d} $usage]} { # check other PATH
     set osaft "$cfg(DIR)/$prg(SAFT)";       # check in PATH of $argv0
     catch { exec {*}$prg(PERL) $osaft +VERSION }  usage;
     if {![regexp {^\d\d\.\d\d\.\d\d} $usage]} {
-        tk_messageBox -icon warning -title "$prg(SAFT) not found" -message "
+        _message warning "$prg(SAFT) not found" "
 most parts of the GUI are missing!
-
+----
+$usage
+----
 !!Hint:
 check PATH environment variable."
 
@@ -836,8 +940,8 @@ check PATH environment variable."
 set cfg(DESC)   {-- CONFIGURATION internal data storage ----------------------}
 set cfg(CDIR)   [file join [pwd] [file dirname [info script]]]
 set cfg(EXEC)   0  ;# count executions, used for object names
-    #               # counter also used for number of TABs in $cfg(objT), hence
-    #               # TABs with executions start at 3, see create_main()
+    #               # counter also used for number of TABs in $cfg(objN), hence
+    #               # TABs with executions start at 3, see create_main_tabs()
 set cfg(x--x)   0  ;# each option  will have its own entry (this is a dummy)
 set cfg(x++x)   0  ;# each command will have its own entry (this is a dummy)
 set cfg(winO)   "" ;# object name of Help   window
@@ -846,8 +950,9 @@ set cfg(winS)   ".";# object name of main   window (usually not used as just .)
 set cfg(winA)   "" ;# object name of About  window
 set cfg(winF)   "" ;# object name of Filter window
 set cfg(winT)   "" ;# (reserved for future use)
+set cfg(objN)   "" ;# object name of notebook; needed to add more note TABS
 set cfg(objS)   "" ;# object name of status line
-set cfg(objT)   "" ;# object name of notebook; needed to add more note TABS
+set cfg(objT)   "" ;# widget name of button ttyresult
 set cfg(VERB)   0  ;# set to 1 to print more informational messages from Tcl/Tk
 set cfg(DEBUG)  0  ;# set to 1 to print debugging messages
 set cfg(TRACE)  0  ;# set to 1 to print program tracing
@@ -950,13 +1055,13 @@ _txt2arr [string map "
 #   - empty strings in columns must be written as {}
 #   - strings *must not* be enclosed in "" or {}
 #   - variables must be defined in map above and used accordingly
-#   - lines without regex (column f_rex contains {}) will not be applied
+#   - lines without RegEx (column f_rex contains {}) will not be applied
 #------+-------+-------+-------+-------+-------+-------+-------+-------------------------------
 # f_key	f_mod	f_len	f_bg	f_fg	f_fn	f_un	f_rex	description of regex
 #------+-------+-------+-------+-------+-------+-------+-------+-------------------------------
   no	-regexp	1	{}	{}	{}	0	no\s*(LO|WE|we|ME|HI)	word 'no' followed by LOW|WEAK|MEDIUM|HIGH
 # NOTE   no  has no colours, otherwhise it would mix with filters below
-# FIXME  no  must be first regex in liste here, but still causes problems in toggle_filter
+# FIXME  no  must be first RegEx in liste here, but still causes problems in toggle_filter
   LOW	-regexp	3	red	{}	{}	0	(LOW|low)	word  LOW   anywhere
   WEAK	-exact	4	red	{}	{}	0	WEAK	word  WEAK  anywhere
   weak	-exact	4	red	{}	{}	0	weak	word  weak  anywhere
@@ -1068,14 +1173,14 @@ proc _dbx         {level txt} {
 }; # _dbx
 
 proc _trace_add   {cmd} {
-    #? initilaize Tcl's tracing for given command or widget
+    #? initialise Tcl's tracing for given command or widget
     trace add execution $cmd enter _trace
     trace add execution $cmd leave _trace
     return
 }; # _trace_add
 
 proc trace_commands  {} {
-    #? initilaize Tcl's tracing for our procs
+    #? initialise Tcl's tracing for our procs
     append _trace_cmds "[info procs create*] "
     append _trace_cmds "[info procs osaft*] "
     append _trace_cmds "[info procs search*] "
@@ -1089,7 +1194,7 @@ proc trace_commands  {} {
 }; # trace_commands
 
 proc trace_buttons   {} {
-    #? initilaize Tcl's tracing for all buttons
+    #? initialise Tcl's tracing for all buttons
     foreach obj [info commands] {
         if {![regexp {^\.}  $obj]}  { continue }
         switch [winfo class $obj] {
@@ -1141,8 +1246,8 @@ proc update_cfg   {}    {
         # cfg(RCSID) is defined in .o-saft.tcl, warn if old one
         _dbx 4 " RCmin$cfg(RCmin) > RCSID$cfg(RCSID) ?"
         if {$cfg(RCmin) > $cfg(RCSID)} {
-            tk_messageBox -icon warning -title "$cfg(RC) version $cfg(RCSID)" \
-                -message "converting data to new version ...\n\nplease update $cfg(RC) using 'contrib/$cfg(RC)'"
+            _message warning "$cfg(RC) version $cfg(RCSID)" \
+                "converting data to new version ...\n\nplease update $cfg(RC) using 'contrib/$cfg(RC)'"
         }
     }
     global cfg_colors cfg_color
@@ -1273,86 +1378,6 @@ proc gui_set_readonly {w}   {
     return
 }; # gui_set_readonly
 
-proc gui_init     {}    {
-    #? initialize GUI
-    _dbx 2 "{}"
-    global cfg prg myX argv
-    if {[catch { package require tablelist } err]} {
-        pwarn "'package tablelist' not found, probably 'tklib' missing; using text layout"
-        set cfg(layout) {text}
-            # cfg(layout) used in create_tab() and create_filtertab()
-            # it's hardcoded set to {text} here if package is missing, that's
-            # working for create_filtertab() as the widgets there are created
-            # only once at startup.
-            # Changing cfg(layout) in the GUI later does only affect creating
-            # tables in the result tab after  osaft_exec(), and will not harm
-            # widgets or functionality created by create_filtertab().
-    }
-    font create osaftHead   {*}[font config TkFixedFont;]  -weight bold
-    font create osaftBold   {*}[font config TkDefaultFont] -weight bold
-    font create osaftSlant  {*}[font config TkFixedFont]   -slant italic
-    if {0 == $prg(option)} {    # only if not done in RC-file
-        option add *Button.font osaftBold  ;# if we want buttons more exposed
-        option add *Label.font  osaftBold  ;# ..
-        option add *Text.font   TkFixedFont;
-    }
-
-    # configure according real size
-    set __x         [lindex [wm maxsize .] 0]
-    set __y         [lindex [wm maxsize .] 1]
-    if {$__y < $myX(miny)} { set myX(miny) $__y  }
-    if {$__x < $myX(minx)} { set myX(minx) $__x  }
-    if {$__x > 1000 }      { set myX(minx) "999" }
-    set myX(geoS)   "$myX(minx)x$myX(miny)"
-
-    set __native    "";
-    # next switch is ugly workaround to detect special start methods ...
-    # it also does some special setup for MacOSX
-    switch [tk windowingsystem] {
-        {win32} { set __native "start" }
-        {win64} { set __native "start" }
-        {aqua}  -
-        {Aqua}  { set __native "open"
-                  set cfg(confirm) {};        # Aqua's tk_save* has no  -confirmoverwrite
-                  if {[regexp -- {-(img|image)} $argv]} {
-                      tk_messageBox -icon warning \
-                          -message "using images for buttons is not recomended on Aqua systems"
-                  } else {
-                      set cfg(bstyle) "text"; # text by default, because Aqua looks nice
-                  }
-                  set myX(miny)   770;        # because fonts are bigger by default
-                }
-    }
-    set myX(geoS)   "$myX(minx)x$myX(miny)"
-
-    # find proper font for tablelist::tablelist; MacOSX is strange ...
-    # usually we should have:  flat6x4, flat7x4, flat7x5, flat7x7, flat8x5,
-    #                          flat9x5, flat9x6, flat9x7, flat10x6,
-    #                          photo7x7, sunken8x7, sunken10x9, or sunken12x11
-    # if no font is found, default will be used, which results in a Tcl error
-    foreach f "flat9x5 flat9x6 flat9x7 flat10x6 flat8x5" {
-        if {[catch {tablelist::tablelist .ttest -arrowstyle $f} err]} { continue }
-        set cfg(tfont) $f
-        destroy .ttest
-        break
-    }
-    _dbx 4 " table font = $cfg(tfont)"
-
-    # search browser, first matching will be used
-    foreach bin " $__native \
-            firefox chrome chromium iceweasel konqueror mozilla \
-            netscape opera safari webkit htmlview www-browser w3m" {
-        set binary [lindex [auto_execok $bin] 0];   # search in $PATH
-        _dbx 4 " browser= $bin $binary"
-        if {[string length   $binary]} {
-            set prg(BROWSER) $binary
-            break
-        }
-    }
-
-    return
-}; # gui_init
-
 proc guitip_set   {w txt}   {
     #? add tooltip message to given widget
     global cfg
@@ -1372,18 +1397,17 @@ proc guitheme_set {w theme} {
     global cfg cfg_buttons IMG
     # text and tip are always configured
     set key [regsub {.*\.([^.]*)$} $w {\1}];    # get trailer of widget name
-    set val [_get_tipp  $key]; if {$val ne ""} { guitip_set   $w  $val }
-    set val [_get_text  $key]; if {$val ne ""} { $w config -text  $val }
-    if {[regexp {docker status$} $val]} { $w config -width 10 }; # FIXME: quick&dirty, not really necessary
-    set val [_get_image $key]; if {![info exists IMG($val)]} { set theme "text" }
+    set val [_get_tipp  $key];  if {"" ne $val} { guitip_set   $w  $val }
+    set val [_get_text  $key];  if {"" ne $val} { $w config -text  $val }
+    set val [_get_image $key];  if {![info exists IMG($val)]} { set theme "text" }
     _dbx 4 " $w\t-> $key\t$theme\t-> $val"
-    if {$theme eq "text"} {
+    if {"text"  eq $theme} {
         set val [_get_color  $key];
-        if {$val ne ""} { $w config -bg    $val }
+        if {"" ne $val} { $w config -bg    $val }
         $w config -image {} -height 1 -relief raised
     }
-    if {$theme eq "image"} {
-        if {$val ne ""} {
+    if {"image" eq $theme} {
+        if {"" ne $val} {
             set h   30
             if {![regexp {^::tk} $IMG($val)]} { set h 20 }
             $w config -image $IMG($val) -relief flat
@@ -1416,7 +1440,7 @@ proc guitheme_init  {theme} {
 proc guicursor_set {cursor} {
     #? set cursor for toplevel and tab widgets and all other windows
     global cfg
-    foreach w [list . objT objS winA winF winO] {
+    foreach w [list . objN objS winA winF winO] {
         if {$w ne "."} { set w $cfg($w) }
         if {$w eq ""}  { continue }
         # now get all children too
@@ -1563,7 +1587,7 @@ proc apply_filter_text  {w} {
 
 proc apply_filter_table {w} {
     #? apply filters for markup in output, data is in table widget $w
-    # FIXME: this is ugly code because the regex in f_rex are optimized for
+    # FIXME: this is ugly code because the regex in f_rex are optimised for
     # use in Tcls's text widget, the regex must be changed to match the values
     # in Tcl's tablelist columns
     _dbx 2 "{$w}"
@@ -1623,7 +1647,7 @@ proc apply_filter_table {w} {
             if {[regexp -nocase ^(LOW|WEAK|MEDIUM|HIGH) $key]} { set col 3; set matchtxt $cmt }
             if {[regexp -nocase -- $rex "$matchtxt"]} {
                 if {$col == 1} {
-                    # if the match is against the first column, colourize the whole line
+                    # if the match is against the first column, colourise the whole line
                     if {$fg ne ""}  { $w rowconfig  $nr -foreground $fg }
                     if {$bg ne ""}  { $w rowconfig  $nr -background $bg }
                     if {$fn ne ""}  { $w rowconfig  $nr -font       $fn }
@@ -1743,7 +1767,7 @@ proc create_window     {title size} {
     pack [label  $this.f0.t  -text $title   -relief flat  ]    -fill x -side left
     pack [button $this.f0.help_me     -command "create_help {$title}"] -side right
     pack [button $this.f1.saveconfig  -command {osaft_save "CFG" 0}]   -side left
-    # FIXME: wiget paremeter $tbl missing for osaft_save
+    # FIXME: widget paremeter $tbl missing for osaft_save
     guitheme_set $this.f1.saveconfig $cfg(bstyle)
     guitheme_set $this.f0.help_me    $cfg(bstyle)
     return $this
@@ -1768,41 +1792,43 @@ proc create_window:nohelp   {w}     { destroy $w.f0.help_me;    return; }
 proc create_window:nosave   {w}     { destroy $w.f1.saveconfig; return; }
     #? destroy "Save" button in created window
 
-proc create_host  {parent}          {
+proc create_host  {parent host_nr}  {
     #? frame with label and entry for host:port; $nr is index to hosts()
+    # must use index to hosts() instead of host itself because the entry widget
+    # needs a variable
     global cfg hosts myX
-    set host  $hosts($hosts(0))
-    incr hosts(0)
-    _dbx 4 " host($hosts(0))= $host"
-    set this $parent.ft$hosts(0)
+    _dbx 2 "{$parent, $host_nr}"
+    set host  $hosts($host_nr)
+    _dbx 4 " host=$host"
+    # the frame with the entry and button widgets will be created and deleted
+    # dynamically, it's difficult to find a unique widget name, hence it will
+    # be search for 
+    set nr   0
+    set this ${parent}$nr
+    incr hosts(0)      ;# for new, empty entry
+    set hosts($hosts(0)) ""
+    while {[winfo exists $this]} { incr nr; set this ${parent}$nr; }
+    # got new valid widget name
           frame  $this
     grid [label  $this.lh -text [_get_text host]] \
-         [entry  $this.eh -textvariable hosts($hosts(0))] \
-         [button $this.host_add -command "create_host {$parent};"] \
-         [button $this.host_del -command "remove_host $this; set hosts($hosts(0)) {}"] \
+         [entry  $this.eh -textvariable hosts($host_nr)] \
+         [button $this.host_add -command "create_host {$parent}  $hosts(0);"] \
+         [button $this.host_del -command "remove_host $this; set hosts($host_nr) {}"] \
 
     guitheme_set $this.host_add $cfg(bstyle)
-    if {$hosts(0)==1} {
+    if {0==$host_nr} {
         # first line has no {-} but {about}
         grid forget  $this.host_del
         grid [button $this.about -command "create_about"] -row 0
-        grid config  $this.about -column 4 -sticky e  -padx "1 $myX(padx)"
+        grid config  $this.about -column 4 -sticky e -padx "1 $myX(padx)"
         guitheme_set $this.about $cfg(bstyle)
+        $this.eh config -textvariable hosts($hosts(0)) ;# correct empty entry
     } else {
         guitheme_set $this.host_del $cfg(bstyle)
     }
     grid config  $this.eh -column 1 -sticky ew
     grid columnconfigure    $this 1 -weight 1
-    set i [expr $hosts(0) - 1]
-    set prev $parent.ft$i
-    while {$i > 0} {    # check if previous frame exists, otherwise decrement
-        if {[winfo exists $prev]} { break; }
-        incr i -1
-        set prev $parent.ft$i
-    }
-    # if we reach here a previous frame exists
-    # or i==0 which should never occour and then will force an error in next line
-    pack $this -fill x -after $prev
+    pack $this -fill x -before ${parent}_1
     return
 }; # create_host
 
@@ -1878,13 +1904,18 @@ proc create_table {parent content}  {
     $this.t columnconfigure 1 -width 50            ;# label
     $this.t columnconfigure 2 -width 25            ;# value
     # insert content
-    set n 1;   # add uniwue number to each line, for initial sorting
-    set ssl "";# TODO: ungly hack: need to detect header line with protocol
+    set i 0        ;# count line numbers; for debuging and warning message
+    set n 1        ;# add unique number to each line, for initial sorting
+    set ssl ""     ;# TODO: ungly hack: need to detect header line with protocol
+    set tsize 0    ;# count size of text, for debugging only
     foreach line [split $content "\n"] {
+        incr i
         # content consist of lines separated by \n , where each line is a label
         # and a value separated by a tab (and additional spaces for formatting)
         # in tabular context, only label and value is required; no tabs, spaces
-        if {[regexp {^\s*$} $line]} { continue };# skip empty lines
+        #_dbx 16 " line   = $i, len=[string length $line]"
+        if {0>=[string length $line]} { continue } ;# defensive programming
+        if {[regexp  {^\s*$}  $line]} { continue } ;# skip empty lines
         #_dbx 16 " line   = $line"
         set nr [format %03d [incr n]]
             # integer must have leading 0, otherwise sorting of tablelist fails
@@ -1944,9 +1975,9 @@ proc create_table {parent content}  {
                 set col1 ""
             }
             if {$cfg(max53) < [string length $col2]} {
-                pwarn "comment for '$col0' to large (> $cfg(max53)); stripped"
+                pwarn "line $i: comment for '$col0' to large (> $cfg(max53)); stripped"
                 set col2 "[string range $col2 1 $cfg(max53)] ..\[stripped\].." ;# see cfg(max53)
-                # FIXME: need to store orignal text somewhere (notin table)
+                # FIXME: need to store orignal text somewhere (not in table)
             }
             set line [list $nr $col0 $col1 $col2]
         } else {
@@ -1960,7 +1991,9 @@ proc create_table {parent content}  {
         }
         set line [regsub -all \t $line {}] ;# remove tabs
         $this.t insert end $line
+        set tsize [expr $tsize + [string length $line]]
     }
+    #_dbx 16 " tsize  = $tsize"
     pack $this -side top
     return $this
 }; # create_table
@@ -2206,11 +2239,13 @@ proc create_pod   {sect} {
     #? create new window with complete help using external viewer
     # for advantages and disadvantages please see contrib/.o-saft.tcl
     global cfg myX prg
+    set pod $cfg(POD)
+    if ![info exists $pod] { set pod "docs/$cfg(POD)" }
     # TODO: does probably not working on Windows
     #tk_messageBox -icon warning -title " using $prg(TKPOD)" \
     #    -message "$prg(TKPOD) will not be closed with $cfg(ICH)"
-    putv  " exec {*}$prg(TKPOD) o-saft.pod -geo $myX(geoO) & "
-    catch { exec {*}$prg(TKPOD) o-saft.pod -geo $myX(geoO) & };
+    putv  " exec {*}$prg(TKPOD) $pod -geo $myX(geoO) & "
+    catch { exec {*}$prg(TKPOD) $pod -geo $myX(geoO) & };
     return
 }; # create_pod
 
@@ -2231,7 +2266,7 @@ proc create_help  {sect} {
     # uses plain text help text from "o-saft.pl --help"
     # This text is parsed for section header line (all capital characters)
     # which will be used as Table of Content and inserted before the text.
-    # All referenzes to this sections are clickable.
+    # All references to this sections are clickable.
     # Also all references to commands (starting with '+') and options ('-')
     # are highlighted and used for navigation.
     # Example text:
@@ -2306,6 +2341,10 @@ proc create_help  {sect} {
            search_text $txt \$search(text);
            "
 
+    # FIXME (2020): all following code for markup needs to be redisigned, as
+    # there are to many missing matches (mainly +CMD and --OPTION)  and some
+    # matches, which result in wrong markup (i.e. --OPTION in a header line)
+
     _dbx 4 " 3. search for section head lines, mark them and add (prefix) to text"
     set anf [$txt search -regexp -nolinestop -all -count end {^ {0,5}[A-Z][A-Za-z_0-9? '()=+,:.-]+$} 1.0]
     #dbx# puts "3. $anf\n$end"
@@ -2375,7 +2414,9 @@ proc create_help  {sect} {
     }
 
     _dbx 4 " 5. search all commands and options and try to set click event"
-    set anf [$txt search -regexp -nolinestop -all -count end { [-+]-?[a-zA-Z0-9_=+-]+([, ]|$)} 3.0]
+    set anf [$txt search -regexp -nolinestop -all -count end { [-+]-?[a-zA-Z0-9_=+-]+([., )]|$)} 3.0]
+    # NOTE: above RegEx does not match  +CMD  or  --OPTION  if they are not
+    #       prefixed with at least two spaces (reason unknown).
     #dbx# puts "4. $anf\n$end"
     # Loop over all matches.  The difficulty is to distinguish matches,  which
     # are the head lines like:
@@ -2390,19 +2431,23 @@ proc create_help  {sect} {
     # is a head line, and following might be a reference:
     #   +version.
     # Unfortunately  --v  --v   (and similar examples) will not be detected as
-    # head line. This is due to the regex in "text search ...",  which doesn't
+    # head line. This is due to the RegEx in "text search ...",  which doesn't
     # allow spaces. # FIXME:
 
+
+    # _dbx "############### {\n[$txt get 0.0 end]\n############### }\n"
     set i 0
     foreach a $anf {
+        set line_nr  [regsub {[.][0-9]*} $a ""]        ;# get line number from $a
+        set line_txt [$txt get $line_nr.1 $line_nr.end];# get full text in the line
         set e [lindex $end $i];
-        set l [$txt get "$a - 2 c" "$a + $e c + 1 c"];  # one char more, so we can detect head line
+        set l [$txt get "$a - 2 c" "$a + $e c + 1 c"]  ;# one char more, so we can detect head line
         set t [string trim [$txt get $a "$a + $e c"]];
         set r [regsub {[+]} $t {\\+}];  # need to escape +
         set r [regsub {[-]} $r {\\-}];  # need to escape -
         set name [_str2obj [string trim $t]]
         _dbx 4 " 5. LNK: $i\tHELP-LNK-$name\t$t"
-        if {[regexp -lineanchor "\\s\\s+$r$" $l]} {     # FIXME: does not match all lines proper
+        if {[regexp {^\s*[+|-]} $line_txt] && [regexp -lineanchor "\\s\\s+$r$" $l]} {
             # these matches are assumed to be the header lines
             $txt tag add    HELP-LNK-$name $a "$a + $e c";
             $txt tag add    HELP-LNK       $a "$a + $e c";
@@ -2505,21 +2550,22 @@ proc create_tab   {parent layout cmd content} {
     global cfg
     set tab [create_note $parent "($cfg(EXEC)) $cmd"];
     switch $layout {
-        text    { set txt [create_text  $tab $content].t }
-        table   { set txt [create_table $tab $content].t }
+        text    { set w [create_text  $tab $content].t }
+        table   { set w [create_table $tab $content].t }
     }
         # ugly hardcoded .t from .note
-    pack [button $tab.saveresult -command "osaft_save $txt {TAB} $cfg(EXEC)"] \
-         [button $tab.ttyresult  -command "osaft_save $txt {TTY} $cfg(EXEC)"    ] \
-         [button $tab.filter     -command "create_filter $txt $cmd"    ] \
+    pack [button $tab.saveresult -command "osaft_save $w {TAB} $cfg(EXEC)"] \
+         [button $tab.ttyresult  -command "osaft_save $w {TTY} $cfg(EXEC)"    ] \
+         [button $tab.filter     -command "create_filter $w $cmd"    ] \
          -side left
     pack [button $tab.closetab   -command "destroy $tab"] -side right
+   set cfg(objT) $tab.ttyresult
     guitheme_set $tab.closetab   $cfg(bstyle)
     guitheme_set $tab.saveresult $cfg(bstyle)
     guitheme_set $tab.ttyresult  $cfg(bstyle)
     guitheme_set $tab.filter     $cfg(bstyle)
-    $cfg(objT) select $tab
-    return $txt
+    $cfg(objN) select $tab
+    return $w
 }; # create_tab
 
 proc create_cmd   {parent title} {
@@ -2739,92 +2785,104 @@ proc create_buttons {parent cmd} {
     return
 }; # create_buttons
 
-proc create_main  {targets} {
+proc create_main_host_entries  {parent w} {
     #? create main window (the complete GUI)
-    #| main {
-    _dbx 2 "{»$targets«}"
-    global cfg prg myX hosts
-    set w ""
-    pack [frame $w.ft0]; # create dummy frame to keep create_host() happy
+    # add hosts from command-line; line  with  +  and  -  or  !  button
+    global hosts
+    set w $parent.$w
+    pack [frame ${w}_1]   ;# create dummy frame to keep create_host() happy
+    foreach {i host} [array get hosts] {    # display hosts
+        if {$i > 5} { pwarn "only 6 hosts possible; »$host« ignored"; continue };
+        create_host $w $i
+    }
+    return
+}; # create_main_host_entries
 
-    #| create command buttons for simple commands and help
-    pack [frame     $w.fq] -fill x -side bottom
-    pack [button    $w.fq.closeme  -command {exit}] -side right -padx $myX(rpad)
+proc create_main_quick_buttons {parent w} {
+    #? create command buttons for simple commands and help
+    global prg myX
+    set w   $parent.$w
+    pack [frame     $w] -fill x
+    pack [button    $w.cmdstart   -command "osaft_exec $w.fc {Start}"] -side left -padx 11
+    foreach b $prg(Ocmd) {
+        create_cmd  $w $b;
+    }
+    pack [button    $w.loadresult -command "osaft_load {_LOAD}"] -side left  -padx 11
+    pack [button    $w.help       -command "create_help {}"]     -side right -padx $myX(padx)
+    return
+}; # create_main_quick_buttons
+
+proc create_main_quick_options {parent w} {
+    #? create option checkboxes for simple access
+    global prg
+    set w   $parent.$w
+    pack [frame     $w] -fill x
+    pack [label     $w.ol -text " "] -side left -padx 11
+    foreach b $prg(Oopt) {
+        create_opt  $w $b;
+    }
+    if {[regexp {\-docker$} $prg(SAFT)]} {
+        pack [entry $w.dockerid -textvariable prg(docker-id) -width 12] -anchor w
+        guitip_set  $w.dockerid [_get_tipp docker-id]
+    }
+    return
+}; # create_main_quick_options
+
+proc create_main_tabs          {parent w} {
+    #? create notebook object and set up Ctrl+Tab traversal
+    global cfg
+    set w   $parent.$w
+    set cfg(objN)   $w
+    ttk::notebook   $w -padding 5
+    ttk::notebook::enableTraversal $w
+    pack $w -fill both -expand 1
+    # create TABs: Command and Options
+    set tab_cmds    [create_note $w "Commands"]
+    set tab_opts    [create_note $w "Options"]
+    set tab_filt    [create_note $w "Filter"]
+    set cfg(EXEC) 2;# ttk::notebook's index counting starts at 0
+    create_buttons  $tab_cmds {CMD}    ;# fill Commands pane
+    create_buttons  $tab_opts {OPT}    ;# fill Options pane
+    create_filtertab $tab_filt {FIL}   ;# fill Filter pane
+    # add Save and Reset button in Options pane
+    pack [button    $tab_opts.saveresult -command {osaft_save "CFG" 0}      ] -side left
+    pack [button    $tab_opts.reset      -command {osaft_reset; osaft_init;}] -side left
+    osaft_init;     # initialise options from .-osaft.pl (values shown in Options tab)
+    return
+}; # create_main_tabs
+
+proc create_main_status_line   {parent w} {
+    #? create status line
+    global cfg
+    set w   $parent.$w
+    set cfg(objS)   $w.t
+    pack [frame     $w   -relief sunken -borderwidth 1] -fill x
+    pack [text      $w.t -relief flat   -height 3 -background [_get_color status] ] -fill x
+    gui_set_readonly $cfg(objS)
+    return
+}; # create_main_status_line
+
+proc create_main_exit_button   {parent w} {
+    #? create exit button
+    global cfg myX
+    set w   $parent.$w
+    pack [frame     $w] -fill x -side bottom
+    pack [button    $w.closeme  -command {exit}] -side right -padx $myX(rpad)
     if {$cfg(VERB)==1} {
-        #pack [button $w.fq.r -text "o"  -command "open \"| $argv0\"; exit" ] -side right
+        #pack [button $w.r -text "o"  -command "open \"| $argv0\"; exit" ] -side right
         # TODO: does not work proper 'cause passing --v fails
-
-        pack [checkbutton $w.fq.img_txt -variable cfg(img_txt) -command {
+        pack [checkbutton $w.img_txt -variable cfg(img_txt) -command {
             if {$cfg(img_txt)==1} { set cfg(bstyle) "image" }
             if {$cfg(img_txt)==0} { set cfg(bstyle) "text"  }
             _dbx 4 " toggle: $cfg(img_txt) # $cfg(bstyle) "
             guitheme_init $cfg(bstyle)
         } \
         ] -side right
-        if {$cfg(bstyle) eq "image"} { $w.fq.img_txt select }
-        guitheme_set $w.fq.img_txt $cfg(bstyle)
+        if {$cfg(bstyle) eq "image"} { $w.img_txt select }
+        guitheme_set $w.img_txt $cfg(bstyle)
     }
-    pack [frame     $w.fc] -fill x
-    pack [button    $w.fc.cmdstart -command "osaft_exec $w.fc {Start}"] -side left -padx 11
-    foreach b $prg(Ocmd) {
-        create_cmd  $w.fc $b;
-    }
-    pack [button    $w.fc.loadresult -command "osaft_load {Load}"] -side left -padx 11
-    pack [button    $w.fc.help -command "create_help {}"] -side right -padx $myX(padx)
-
-    #| create option buttons for simple access
-    pack [frame     $w.fo] -fill x
-    pack [label     $w.fo.ol -text " "] -side left -padx 11
-    foreach b $prg(Oopt) {
-        create_opt  $w.fo $b;
-    }
-    if {[regexp {\-docker$} $prg(SAFT)]} {
-        pack [entry $w.fo.dockerid -textvariable prg(docker-id) -width 12] -anchor w
-        guitip_set  $w.fo.dockerid [_get_tipp docker-id]
-    }
-
-    #| create notebook object and set up Ctrl+Tab traversal
-    set cfg(objT)   $w.note
-    ttk::notebook   $cfg(objT) -padding 5
-    ttk::notebook::enableTraversal $cfg(objT)
-    pack $cfg(objT) -fill both -expand 1
-
-    #| create TABs: Command and Options
-    set tab_cmds    [create_note $cfg(objT) "Commands"]
-    set tab_opts    [create_note $cfg(objT) "Options"]
-    set tab_filt    [create_note $cfg(objT) "Filter"]
-    set cfg(EXEC) 2;# ttk::notebook's index counting starts at 0
-    create_buttons  $tab_cmds {CMD}    ;# fill Commands pane
-    create_buttons  $tab_opts {OPT}    ;# fill Options pane
-    create_filtertab $tab_filt {FIL}   ;# fill Filter pane
-
-    #| add Save and Reset button in Options pane
-    pack [button    $tab_opts.saveresult -command {osaft_save "CFG" 0}      ] -side left
-    pack [button    $tab_opts.reset      -command {osaft_reset; osaft_init;}] -side left
-    osaft_init;     # initialise options from .-osaft.pl (values shown in Options tab)
-
-    #| create status line
-    pack [frame     $w.fl   -relief sunken -borderwidth 1] -fill x
-    pack [text      $w.fl.t -relief flat   -height 3 -background [_get_color status] ] -fill x
-    set cfg(objS)   $w.fl.t
-    gui_set_readonly $cfg(objS)
-
-    #| add hosts from command line
-    foreach host $targets {         # display hosts
-        if {$hosts(0) > 5} { pwarn "only 6 hosts possible; »$host« ignored"; continue };
-        create_host $w
-        set hosts($hosts(0)) $host
-    }
-
-    #| add one Host: line  with  +  and  !  button
-    create_host $w
-
-    #| apply themes
-    guitheme_init $cfg(bstyle)
-    #| main }
-
     return
-}; # create_main
+}; # create_main_exit_button
 
 proc search_view  {w key}   {
     #? scroll given text widget according key
@@ -2955,22 +3013,22 @@ proc search_text  {w search_text} {
     if {[regexp ^\\s*$ $search_text]}  { return; } ;# do not search for spaces
     if {"exact" ne $search(mode)} {
         if {[string length $search_text] < 4} {
-            tk_messageBox -icon warning -title "Search pattern" -message [_get_text h_min4chars]
+            _message warning "Search pattern" [_get_text h_min4chars]
             return
         }
     }
     if {$search_text eq $search(last)} { search_next $w {+}; return; }
-    # new text to be searched, initialize ...
+    # new text to be searched, initialise ...
     set search(last) $search_text
     $w tag delete HELP-search-pos      ;# tag which contains all matches
     _dbx 4 " mode           = $search(mode)"
     set regex $search_text
     set words ""       ;# will be computed below
     set rmode "-regexp";# mode (switch) for Tcl's "Text search"
-    # prepare regex according smart and fuzzy mode; builds a new regex
+    # prepare RegEx according smart and fuzzy mode; builds a new RegEx
     switch $search(mode) {
         {smart} {
-            set regex [regsub -all {([(|*)])}   $regex {[\1]}] ;# some characters need to be escaped before building regex
+            set regex [regsub -all {([(|*)])}   $regex {[\1]}] ;# some characters need to be escaped before building RegEx
             # build pattern with each char optional
             set i 0
             foreach c [lindex [split $regex ""]] {
@@ -3005,8 +3063,8 @@ proc search_text  {w search_text} {
             }
         }
         {regex} {
-            # regex fails, when some meta characters are uses as first or last
-            # character, sanatized regex to avoid compiling regex
+            # RegEx fails, when some meta characters are uses as first or last
+            # character, sanatised RegEx to avoid compiling RegEx
             # Note: Tcl is picky about character classes, need \\ inside []
             set regex [regsub {^(\\)}     $regex {\\\1}]   ;# leading  \ is bad
             set regex [regsub {^([|*+-])} $regex {[\1]}]   ;# leading *|+ is bad
@@ -3033,13 +3091,13 @@ proc search_text  {w search_text} {
             set err ""
             catch { $w search -regexp -all -nocase -- $regex 1.0 } err
             if {[regexp {compile} $err]} {
-                tk_messageBox -icon warning -title [_get_text h_badregex] -message $err
+                _message warning [_get_text h_badregex] $err
                 return
             }
             # else { regex OK }
             }
     }
-    _dbx 4 " regex sanatized= $regex";
+    _dbx 4 " regex sanatised= $regex";
     _dbx 4 " regex mode     = $rmode";
     # ready to fire ...
     set anf [$w search $rmode -all -nocase -count end -- $regex 1.0]
@@ -3085,7 +3143,7 @@ proc search_text  {w search_text} {
     return
 }; # search_text
 
-proc search_rset  {} {
+proc search_rset  {}    {
     #? reset/clear search list (history)
     _dbx 2 "{}"
     global search
@@ -3120,11 +3178,10 @@ proc osaft_write_rc     {}  {
     global cfg argv0
     set qq {"} ;# dumm "
     if [catch { set fid [open $argv0 r]} err] { puts "**ERROR: $err"; exit 2 }
-    # TODO: print docu, see contrib/.o-saft.tcl
     # $rc_doc is used to define help text with the same syntax as used for this
     # file to avoid that it will be extracted with  --help  option, the text is
     # defined with a leading space in each line.
-    # Note that the VERSION of the generated file is the same as the VERSIOn of
+    # Note that the VERSION of the generated file is the same as the VERSION of
     # this file itself.
     set rc_doc "#?
  #? NAME
@@ -3137,7 +3194,7 @@ proc osaft_write_rc     {}  {
  #?      This is the user-configuration file for O-Saft's GUI  o-saft.tcl .
  #?
  #? USAGE
- #?      This file must recide in the user's  HOME  directory or the  directory
+ #?      This file must reside in the user's  HOME  directory or the  directory
  #?      where  o-saft.tcl  will be started.
  #?
  #? SYNTAX
@@ -3145,7 +3202,7 @@ proc osaft_write_rc     {}  {
  #?      variables.
  #?
  #? VERSION
- #?      @(#) .o-saft.tcl generated by 1.228 19/11/25 23:25:20
+ #?      @(#) .o-saft.tcl generated by 1.253 21/05/02 11:28:18
  #?
  #? AUTHOR
  #?      dooh, who is author of this file? cultural, ethical, discussion ...
@@ -3245,7 +3302,33 @@ proc osaft_write_opts   {}  {
     return
 }; # osaft_write_opts
 
-proc osaft_about    {mode}  {
+proc osaft_get_data {norc mode} {
+    #? return configuration from prg(SAFT) or corresponding file
+    #  $mode denotes the type of configuration; it is also the file suffix,
+    #  example: cfg = "--help=data"
+    #       reads:  o-saft.--help=data
+    #    or calls:  o-saft.pl --help=data
+    _dbx 2 "{$norc,$mode}"
+    global cfg prg
+    set txt  ""
+    if {0==$cfg(docs-exe)} {
+        set file "$cfg(docs-dir)/$cfg(O-Saft).$mode" ;# TODO: directory hardcoded
+        if {![catch {open $file  r} fid]} {
+            set txt [read $fid]
+            close  $fid
+            lappend cfg(docs-files) $file
+	    return $txt
+        }
+        _dbx 4 " error=$fid; ignored"
+        # else
+        # open failed, file may not exist
+    }
+    putv  " exec {*}$prg(PERL) $prg(SAFT) [docker_args] $norc $mode"
+    catch { exec {*}$prg(PERL) $prg(SAFT) [docker_args] $norc $mode } txt
+    return $txt
+}; # osaft_get_data
+
+proc osaft_about {mode} {
     #? extract description from myself; returns text
     _dbx 2 "{$mode}"
     global arrv argv0
@@ -3263,13 +3346,12 @@ proc osaft_about    {mode}  {
     return $hlp
 }; # osaft_about
 
-proc osaft_help   {}        {
+proc osaft_help   {}    {
     #? get help from o-saft.pl --help (for use in own help window)
     _dbx 2 "{}"
     global cfg prg
     # get information from O-Saft; it's a performance penulty, but simple ;-)
-    putv               " exec {*}$prg(PERL) $prg(SAFT) [docker_args] +help "
-    set help ""; catch { exec {*}$prg(PERL) $prg(SAFT) [docker_args] +help } help
+    set help [osaft_get_data "" "+help"]
     if {5 > [llength [split $help "\n"]]} {
         _dbx 2 " help = »$help«"
         # exec call failed, probably because  PATH  does not contain . then
@@ -3281,8 +3363,7 @@ proc osaft_help   {}        {
         # if it was a problem with docker, following most likely fails too
         # FIXME: workaround does not work with --docker
         set prg(SAFT) [file join "." $prg(SAFT)];# try current directory also
-        putv               " exec {*}$prg(PERL) $prg(SAFT) [docker_args] --no-rc +help "
-        set help ""; catch { exec {*}$prg(PERL) $prg(SAFT) [docker_args] --no-rc +help } help
+        set help [osaft_get_data --no-rc "+help"]
     }
 
     _dbx 4 " 1. collect more documentations with --help=*"
@@ -3290,8 +3371,7 @@ proc osaft_help   {}        {
     foreach key [list alias data checks regex rfc glossar] {
         # missing: text ourstr
         set txt ""
-        putv  " exec {*}$prg(PERL) $prg(SAFT) --no-rc --help=$key "
-        catch { exec {*}$prg(PERL) $prg(SAFT) --no-rc --help=$key } txt
+        set txt [osaft_get_data --no-rc "--help=$key"]
         if {2 < [llength [split $txt "\n"]]} {
             set txt [regsub -all {[&]} $txt {\\&}] ;# avoid interpretation by regexp
             # add section header, hardcoded (stolen from o-saft-man.pm)
@@ -3332,30 +3412,30 @@ proc osaft_help   {}        {
     return $help
 }; # osaft_help
 
-proc osaft_reset  {}        {
-    #? reset all options in cfg()
+proc osaft_reset  {}    {
+    #? reset all options in exe()
     _dbx 2 "{}"
-    global cfg
+    global exe
     guistatus_set "reset"
-    foreach {idx val} [array get cfg] {
+    foreach {idx val} [array get exe] {
         if {[regexp {^[^-]} $idx]}     { continue };# want options only
         if {[string trim $val] eq "0"} { continue };# already ok
         if {[string trim $val] eq "1"} {
-            set cfg($idx]) 0
+            set exe($idx]) 0
         } else {
-            set cfg($idx]) ""
+            set exe($idx]) ""
         }
     }
     return
 }; # osaft_reset
 
-proc osaft_init   {}        {
+proc osaft_init   {}    {
     #? set values from .o-saft.pl in cfg()
     _dbx 2 "{}"
-    global cfg prg
-    if {[regexp {\-docker$} $prg(SAFT)]} { return };# skip in docker mode
+    global cfg exe prg
+    if {1==$cfg(docker)} { return };# skip in docker mode
     foreach l [split $cfg(.CFG) "\r\n"] {
-        # expected lines look like:
+        # data from .o-saft.pl, expected lines look like:
         #  --no-header
         #  --cfg_cmd=bsi=xxx yyy
         #
@@ -3369,13 +3449,13 @@ proc osaft_init   {}        {
             set idx [string trim $l]
             set val 1
         }
-        _dbx 4 " cfg($idx) = »$val«"
-        set cfg($idx) $val
+        _dbx 4 " exe($idx) = »$val«"
+        set exe($idx) $val
     }
     return
 }; # osaft_init
 
-proc _get_table   {tbl}     {
+proc _get_table   {tbl} {
     #? return all line from the text widget (table) $tbl, except the hidden ones
     # lines are formatted like result from O-Saft (roughly, not exactly)
     set txt ""
@@ -3395,7 +3475,7 @@ proc osaft_save   {tbl type nr} {
     #? save selected output from text widget $tbl to file; $nr used if $type == TAB
     # $type denotes type of data (TAB = results() or CFG = cfg()); $nr denotes entry
     _dbx 2 "{$tbl, $type, $nr}"
-    global cfg prg results
+    global cfg exe prg results
     if {$type eq "TTY"} {
         # FIXME: following type of TAB needs to be identified individually, not globally
         switch $cfg(layout) {
@@ -3404,9 +3484,9 @@ proc osaft_save   {tbl type nr} {
         }
         return     ;# ready
     }
-    set title  [$cfg(objT) tab $nr -text];# get TAB's title
+    set title  [$cfg(objN) tab $nr -text];# get TAB's title
     set suffix [regsub -all {\s*\([0-9]*\)\s*} $title  {}] ;# remove (index)
-    set suffix [regsub -all {[^a-zA-Z0-9_+-]}  $suffix {_}];# sanatize for filename
+    set suffix [regsub -all {[^a-zA-Z0-9_+-]}  $suffix {_}];# sanatise for filename
     if {$type eq "TAB"} {
         set name [tk_getSaveFile {*}$cfg(confirm) -title "$cfg(TITLE): [_get_tipp saveresult]" -initialfile "$prg(SAFT)--$suffix.log"]
         if {$name eq ""} { return }
@@ -3420,7 +3500,7 @@ proc osaft_save   {tbl type nr} {
         set name [tk_getSaveFile {*}$cfg(confirm) -title "$cfg(TITLE): [_get_tipp saveconfig]" -initialfile ".$prg(SAFT)--new"]
         if {$name eq ""} { return }
         set fid  [open $name w]
-        foreach {idx val} [array get cfg] { # collect selected options
+        foreach {idx val} [array get exe] { # collect selected options
             if {[regexp {^[^-]} $idx]}     { continue } ;# want options only
             if {[string trim $val] eq "0"} { continue } ;#
             if {[string trim $val] eq "1"} {
@@ -3436,23 +3516,23 @@ proc osaft_save   {tbl type nr} {
     return
 }; # osaft_save
 
-proc osaft_load   {cmd}     {
+proc osaft_load   {cmd} {
     #? load results from file and create a new TAB for it
     _dbx 2 "{$cmd}"
     global cfg results
-    if {$cmd eq "Load"} {
-        set name [tk_getOpenFile -title "$cfg(TITLE): [_get_tipp loadresult]"]
-    } else {
-        set name $cmd
+    set name $cmd
+    switch $cmd {
+        _LOAD { set name [tk_getOpenFile -title "$cfg(TITLE): [_get_tipp loadresult]"] }
+        STDIN { set fid stdin }
     }
     if {$name eq ""} { return }
     guicursor_set watch
     incr cfg(EXEC)
-    set fid [open $name r]
+    if {"STDIN"!=$name} { set fid [open $name r] }
     set results($cfg(EXEC)) [read $fid]
-    close $fid
-    set txt [create_tab  $cfg(objT) $cfg(layout) $cmd $results($cfg(EXEC))]
-    apply_filter $txt $cfg(layout) $cmd    ;# text placed in pane, now do some markup
+    if {"STDIN"!=$name} { close $fid }
+    set w [create_tab  $cfg(objN) $cfg(layout) [file tail $name] $results($cfg(EXEC))]
+    apply_filter $w $cfg(layout) $name     ;# text placed in pane, now do some markup
     # TODO: filter may fail (return Tcl error) as data is not known to be table or text
     #puts $fid $results($nr)
     guistatus_set "loaded file: $name"
@@ -3464,41 +3544,42 @@ proc osaft_exec   {parent cmd}  {
     #? run $prg(SAFT) with given command; write result to global $osaft
     # $parent is a dummy here
     _dbx 2 "{$cmd}"
-    global cfg hosts prg results
+    global cfg exe hosts prg results
     guicursor_set watch
     guistatus_set "#{ $cmd"
-    set do  {};     # must be set to avoid tcl error
-    set opt {};     # ..
-    set targets {}; # ..
-    if {[regexp {\-docker$} $prg(SAFT)]} {
+    set do  {}     ;# must be set to avoid tcl error
+    set opt {}     ;# ..
+    set targets {} ;# ..
+    if {1==$cfg(docker)} {
         # pass image ID to Docker;
         # note that this option must be before o-saft.pl commands or options
+        # TODO:  docker_args() benutzen
         lappend do "-id=$prg(docker-id)"
         lappend do "-tag=$prg(docker-tag)"
     }
-    if {$cmd eq "Start"} {
-        foreach {idx val} [array get cfg] { # collect selected commands
-            if {[regexp {^[^+]} $idx]}     { continue }; # want commands only
+    if {"Start" eq $cmd} {
+        foreach {idx val} [array get exe] { # collect selected commands
+            if {[regexp {^[^+]} $idx]}     { continue };# want commands only
             if {[string trim $val] ne "1"} { continue };
             lappend do $idx
         }
     } else {
         lappend do $cmd
     }
-    foreach {idx val} [array get cfg] {     # collect selected options
+    foreach {idx val} [array get exe] {     # collect selected options
         if {[regexp {^[^-]} $idx]}  { continue };# want options only
         set val [string trim $val]
-        if {$val eq "0"} { continue };      # unset # FIXME: cannot use 0 as value --x=0
+        if {$val eq "0"} { continue }      ;# unset # FIXME: cannot use 0 as value --x=0
         if {$val eq "1"} { lappend opt  $idx; continue };
         if {$val ne  ""} { lappend opt "$idx=$val"; };
     }
-    foreach {i h} [array get hosts] {       # collect hosts
-        if {$i==0}                  { continue };   # first entry is counter
-        if {[string trim $h] eq ""} { continue };   # skip empty entries
-        lappend targets $h
+    foreach {i host} [array get hosts] {    # collect hosts
+        if {0==$i}                     { continue };# first entry is counter
+        if {[string trim $host] eq ""} { continue };# skip empty entries
+        lappend targets $host
     }
-    # check for some special docker commands; # TODO: quick&dirty
-    if {$cmd eq "docker_status"} {
+    # check for some special docker commands;# TODO: quick&dirty
+    if {"docker_status" eq $cmd} {
         # o-saft-docker status  has no other options
         set targets {}
         set opt     {}
@@ -3507,16 +3588,16 @@ proc osaft_exec   {parent cmd}  {
         lappend do  "status"
     }
     if {[regexp {^win(32|64)} [tk windowingsystem]]} {
-        set execcmd [list exec {*}$prg(PERL) $prg(SAFT) {*}$opt {*}$do {*}$targets]; # Tcl >= 8.5
+        set execcmd [list exec           {*}$prg(PERL) $prg(SAFT) {*}$opt {*}$do {*}$targets]; # Tcl >= 8.5
         # Microsoft windows has no proper STDERR etc.
     } else {
         set execcmd [list exec 2>@stdout {*}$prg(PERL) $prg(SAFT) {*}$opt {*}$do {*}$targets]; # Tcl >= 8.5
         # on some systems (i.e. Mac OS X) buffering of STDOUT and STDERR is not
-        # synchronized, hence we redirect STDERR to STDOUT, which is OK herein,
+        # synchronised, hence we redirect STDERR to STDOUT, which is OK herein,
         # because no other process can fetch STDERR or STDOUT.
         # probaly we also need:  chan configure stdout -buffering none
     }
-    # sanatize $execcmd for printing in status line and results TAB
+    # sanatise $execcmd for printing in status line and results TAB
     # Tcl uses {} to quote strings, which need to be '' for a shell
     # finally we use $execcmd for execution and $exectxt for print
     set exectxt $execcmd
@@ -3528,7 +3609,7 @@ proc osaft_exec   {parent cmd}  {
     set status  0
     putv          " $execcmd "
     if {[catch { {*}$execcmd } result errors]} {
-        # exited abnormaly, get status and sanatize result
+        # exited abnormaly, get status and sanatise result
         # dict get $errors --errorcode   looks like:  CHILDSTATUS 9498 42
         # dict get $errors --errorinfo   returns same as we have in $results
         # because STDERR was redirected to STDOUT
@@ -3545,8 +3626,8 @@ proc osaft_exec   {parent cmd}  {
     set results($cfg(EXEC)) "\n$exectxt\n\n$result\n"      ;# store result for later use
     set _layout $cfg(layout)
     if {[regexp {[+]version$} $cmd]} { set _layout "text" };# no table data (only 2 columns)
-    if { "docker_status"  eq  $cmd}  { set _layout "text" };# don't need table here
-    set txt [create_tab  $cfg(objT) $_layout $cmd $results($cfg(EXEC))]
+    if {$cmd eq "docker_status"}     { set _layout "text" };# don't need table here
+    set txt [create_tab  $cfg(objN) $_layout $cmd $results($cfg(EXEC))]
     apply_filter $txt $_layout $cmd    ;# text placed in pane, now do some markup
     destroy $cfg(winF)                 ;# workaround, see FIXME in create_filtertab
     guistatus_set "#} $do done (status=$status)."  ;# status not yet used ...
@@ -3554,149 +3635,131 @@ proc osaft_exec   {parent cmd}  {
     return
 }; # osaft_exec
 
-#_____________________________________________________________________________
-#_____________________________________________________________________ main __|
-
-set targets "";                 # will later be copied to hosts()
-set doit    0;
-foreach arg $argv {
-    switch -glob $arg {
-        --h         -
-        --help      { puts [osaft_about "HELP"]; exit; }
-        --help=opts { osaft_write_opts;   exit; }
-        +VERSION    { puts $cfg(VERSION); exit; }
-        --version   { puts $cfg(mySID);   exit; }
-        --rc        { osaft_write_rc;     exit; }
-        +quit       { set   cfg(quit)   1;  }
-        -docker     -
-        --docker    { set   prg(SAFT)   "o-saft-docker"; }
-        --dbx       -
-        --d         { set   cfg(DEBUG)  1;  }
-        --d=*       { set   cfg(DEBUG)  [regsub {^--d=} $arg {}]; }
-        --trace     { set   cfg(TRACE)  1;  }
-        --v         { set   cfg(VERB)   1;  }
-        --gui       { }
-        --image     -
-        --img       { set   cfg(bstyle) "image";}
-        --text      { set   cfg(bstyle) "text"; }
-        --tip       { set   cfg(TIP)    1;  }
-         -id=*      { set   prg(docker-id)  [regsub {^-id=}    $arg {}]; }
-        --id=*      { set   prg(docker-id)  [regsub {^--id=}   $arg {}]; }
-         -tag=*     { set   prg(docker-tag) [regsub {^-tag=}   $arg {}]; }
-        --tag=*     { set   prg(docker-tag) [regsub {^--tag=}  $arg {}]; }
-        --load=*    { lappend cfg(files)    [regsub {^--load=} $arg {}]; }
-        --post=*    { set   prg(post) $arg; }
-
-        options__for_debugging__only  { set dumm "" }
-        --test-o-saft -
-        --test-osaft  -
-        --testosaft   { set cfg(DEBUG) 99;  }
-
-        --*         { set cfg($arg) 1;      }
-        +*          { set cfg($arg) 1; set doit 1;     }
-        *           { lappend targets $arg; }
-        default     { pwarn "unknown parameter »$arg«; ignored" }
-    }
-}
-if {$cfg(DEBUG)> 0} { set cfg(VERB) 1; }
-if {$cfg(TRACE)> 0} { trace_commands;  }
-if {$cfg(VERB) > 0} { lappend prg(Ocmd) {+quit} {+version}; }
-if {[regexp {\-docker$} $prg(SAFT)]} { lappend prg(Ocmd) {docker_status}; }
-
-#| read $cfg(RC) if any
-#  if the file does not exist, the error is silently catched and ignored
-set rcfile [file join $env(HOME) $cfg(RC)]
-if {[file isfile $rcfile]} { catch { source $rcfile } error_txt }
-set rcfile [file join {./}       $cfg(RC)]
-putv " source $rcfile"
-if {[file isfile $rcfile]} { catch { source $rcfile } error_txt }
-update_cfg;                     # update configuration as needed
-
-#| read $cfg(IMG)               # must be read before any widget is created
-read_images $cfg(bstyle);       # more precisely: before first use of guitheme_set
-
-# FIXME: prg(docker-id) is missing here;  hence cfg(HELP), cfg(OPTS), cfg(CMDS)
-#        will be empty if O-Saft's default Docker image is not (found) running
-#        workaround: use environment variables, see o-saft-docker
-set cfg(HELP)   [osaft_help]   ;# calls also:  $prg(SAFT) +help
-putv                      " exec {*}$prg(PERL) $prg(SAFT) [docker_args] --help=opt"
-set cfg(OPTS)   ""; catch { exec {*}$prg(PERL) $prg(SAFT) [docker_args] --help=opt }      cfg(OPTS)
-putv                      " exec {*}$prg(PERL) $prg(SAFT) [docker_args] --help=commands"
-set cfg(CMDS)   ""; catch { exec {*}$prg(PERL) $prg(SAFT) [docker_args] --help=commands } cfg(CMDS)
-
-if {5 > [llength [split $cfg(CMDS) "\n"]]} {
-    # failed, so we have no commands, no options and no help text
-    # checking cfg(CMDS) is sufficient, as without commands nothing can be done
-    tk_messageBox -icon error -title "**ERROR: $prg(SAFT) failed" \
-        -message "$prg(SAFT) did not return list of commands
+proc config_read  {}    {
+    #? read configuration RC-file and IMG-file
+    _dbx 2 "{}"
+    global cfg prg env
+    # read $cfg(RC) if any
+    # if the file does not exist, the error is silently catched and ignored
+    set rcfile [file join $env(HOME) $cfg(RC)]
+    if {[file isfile $rcfile]} { catch { source $rcfile } error_txt }
+    set rcfile [file join {./}       $cfg(RC)]
+    putv " source $rcfile"
+    if {[file isfile $rcfile]} { catch { source $rcfile } error_txt }
+    update_cfg                     ;# update configuration as needed
+    # read $cfg(IMG)               ;# must be read before any widget is created
+    read_images $cfg(bstyle)       ;# more precisely: before first use of guitheme_set
+    # read (get) data from prg(SAFT)
+    # FIXME: prg(docker-id) is missing here;  hence cfg(HELP), cfg(OPTS), cfg(CMDS)
+    #        will be empty if O-Saft's default Docker image is not (found) running
+    #        workaround: use environment variables, see o-saft-docker
+    set norc      ""               ;# may be --no-rc if necessary
+    set cfg(HELP) [osaft_help]     ;# calls also:  $prg(SAFT) +help
+    set cfg(OPTS) [osaft_get_data $norc "--help=opt"]
+    set cfg(CMDS) [osaft_get_data $norc "--help=commands"]
+    if {5 > [llength [split $cfg(CMDS) "\n"]]} {
+        # failed, so we have no commands, no options and no help text
+        # checking cfg(CMDS) is sufficient, as without commands nothing can be done
+        _message error "**ERROR: $prg(SAFT) failed" \
+            "$prg(SAFT) did not return list of commands
 ----
 $cfg(CMDS)
 ----
 "
-    exit 2
-}
+        if {0==$cfg(testtcl)} {
+            exit 2
+        }
+    }
+    return
+}; # config_read
 
-#| special debug output
-if {99==$cfg(DEBUG)} { puts "$cfg(HELP)"; exit; }
+proc config_print {}    {
+    #? print debug information
+    _dbx 2 "{}"
+    global argv0 argv env cfg prg myX hosts
 
-gui_init
+    # some platforms are picky (i.e. Android's AndroWish)-:
+    global tcl_patchLevel
+    global tcl_platform
+    global tcl_library
+    global tcl_rcFileName
+    global tk_library
+    global tk_patchLevel
+    global tk_strictMotif
 
-#| create toplevel window
-wm title        . $cfg(TITLE)
-wm iconname     . [string tolower $cfg(TITLE)]
-wm geometry     . $myX(geoS)
-
-bind . <Control-v> {clipboard get}
-bind . <Control-c> {clipboard clear ; clipboard append [selection get]}
-
-#| create main window, see  #| main {  ..  #| main }  above
-create_main $targets
-
-#| load files, if any
-foreach f $cfg(files) {
-    if {![file exists $f]} { continue }
-    osaft_load $f
-}
-
-#| GUI ready, initilize tracing if required
-if {$cfg(TRACE) > 0} { trace_buttons }
-
-#| some verbose output
-putv " hosts= $hosts(0)"
-set vm "";      # check if inside docker
-if {[info exist env(osaft_vm_build)]==1}    { set vm "($env(osaft_vm_build))" }
-if {[regexp {\-docker$} $prg(SAFT)]}        { set vm "(using $prg(SAFT))" }
-guistatus_set "$argv0 $vm $argv"
-    # full path and all passed arguments; useful if started from .desktop file
-
-# must be at end when window was created, otherwise wm data is missing or mis-leading
-if {$cfg(VERB)==1 || $cfg(DEBUG)==1} {
     if {[info commands console] eq "console"} { console show }; # windows hack
     # cfg(RCSID) set in RC-file
-    set rc  "not found"; if {[info exists cfg(RCSID)]==1} { set rc  "found" };
-    set ini "not found"; if {$cfg(.CFG) ne ""}            { set ini "found" };
-    set tip "not used";  if {$cfg(TIP)  == 0 }            { set tip "used" };
-    set geo "";          if {[info exists geometry]==1}   { set geo "$geometry" }
-    set wmf "(shown with --d only"
-    set max "(shown with --d only"
-    if {$cfg(DEBUG)==1} {
+    set rc  "not found";    if {1==[info exists cfg(RCSID)]} { set rc  "found" };
+    set ini "not found";    if {$cfg(.CFG) ne ""}            { set ini "found" };
+    set tip "not used";     if {$cfg(TIP)  == 0 }            { set tip "used" };
+    set geo "";             if {1==[info exists geometry]}   { set geo "$geometry" }
+    set wmf "<<shown with --d only>>"
+    set max "<<shown with --d only>>"
+    set osv $tcl_platform(osVersion)
+    set str_make "<<value not printed (OSAFT_MAKE exists)>>"
+    set tab "<<no values>>"
+    if {0<[string length $cfg(objN)]} {
+        set tab [$cfg(objN) tabs]
+    }
+    if {[info exists env(OSAFT_MAKE)] == 1} {
+        set osv $str_make
+    }
+    # SEE Make:OSAFT_MAKE (in Makefile.pod)
+    # TODO: string should be STR_MAKEVAL from osaft.pm
+    if {1 == $cfg(DEBUG)} {
         # use with --d only to avoid noisy output with "make test"
         set max [wm maxsize .]
         set wmf [wm frame   .] ;# returns a pointer
-        if {[info exists env(OSAFT_MAKE)] == 1} {
-            # SEE Make:OSAFT_MAKE (in Makefile.pod)
-            set wmf {<<value not printed (OSAFT_MAKE exists)>>}
-            # TODO: string should be STR_MAKEVAL from osaft.pm
+        if {1==[info exists env(OSAFT_MAKE)]} {
+            set wmf $str_make
         }
     }
-   #.CFG:      $cfg(.CFG)   # don't print, too much data
+    #.CFG:      $cfg(.CFG)   # don't print, too much data
+
+    set targets ""
+    foreach {i host} [array get hosts] {
+        if {0==$i} { continue };# first entry is counter
+        set targets "$targets $host"
+    }
+    set tk_wm ""
+    if {0==[info exists env(ANDROID_DATA)]} {
+        # some platforms are picky (i.e. Android's AndroWish)-:
+        set tk_wm "\
+|  rcFileName= $tcl_rcFileName
+Tk  version   = $tk_patchLevel
+ |  library   = $tk_library
+ |  strictMotif= $tk_strictMotif
+WM  frame     = $wmf
+ |  maxsize   = $max
+ |  geometry  = [wm geometry   .]
+ |  focusmodel= [wm focusmodel .]
+ |  system    = [tk windowingsystem]
+ |  clipboard = $myX(buffer)
+ |  geometry  = $geo "
+    };# not Android
+
+#dbx# puts "CFG: [array names cfg]"
+#dbx# puts "EXE: [array names exe]"
 
     puts [regsub -all -lineanchor {^} "
-PRG $argv0 -- $cfg(ICH)
+ICH self      = $cfg(ICH)
+ |  SID       = $cfg(SID)
+ |  DIR       = $cfg(DIR)
+ |  ME        = $cfg(ME)
+ |  IMG       = $cfg(IMG)
+ |  POD       = $cfg(POD)
  |  RC        = $cfg(RC)\t$rc
- |  O-Saft    = $prg(SAFT)
+ |  CDIR, pwd = $cfg(CDIR)
+ |  O-Saft    = $cfg(O-Saft)
+PRG $argv0
  |  INIT      = $prg(INIT)\t$ini
  |  post      = $prg(post)
+ |  BROWSER   = $prg(BROWSER)
+ |  PERL      = $prg(PERL)
+ |  SAFT      = $prg(SAFT)
+ |  TKPOD     = $prg(TKPOD)
+ |  Ocmd      = $prg(Ocmd)
+ |  Oopt      = $prg(Oopt)
 ARG argv      = $argv
  |  targets   = $targets
  |  files     = $cfg(files)
@@ -3706,37 +3769,245 @@ CFG TITLE     = $cfg(TITLE)
  |  tooltip   = tooltip package\t$tip
  |  bstyle    = $cfg(bstyle)
  |  layout    = $cfg(layout)
- |  BROWSER   = $prg(BROWSER)
- |  PERL      = $prg(PERL)
- |  SAFT      = $prg(SAFT)
-TCL version   = $::tcl_patchLevel
- |  library   = $::tcl_library
- |  platform  = $::tcl_platform(platform)
- |  os        = $::tcl_platform(os)
- |  osVersion = $::tcl_platform(osVersion)
- |  byteOrder = $::tcl_platform(byteOrder)
- |  wordSize  = $::tcl_platform(wordSize)
- |  rcFileName= $::tcl_rcFileName
-Tk  version   = $::tk_patchLevel
- |  library   = $::tk_library
- |  strictMotif= $::tk_strictMotif
-WM  frame     = $wmf
- |  maxsize   = $max
- |  geometry  = [wm geometry   .]
- |  focusmodel= [wm focusmodel .]
- |  system    = [tk windowingsystem]
- |  clipboard = $myX(buffer)
- |  geometry  = $geo
-TAB tabs      = [$cfg(objT) tabs]
+ |  docs-files= $cfg(docs-files)
+TCL version   = $tcl_patchLevel
+ |  library   = $tcl_library
+ |  platform  = $tcl_platform(platform)
+ |  os        = $tcl_platform(os)
+ |  osVersion = $osv
+ |  byteOrder = $tcl_platform(byteOrder)
+ |  wordSize  = $tcl_platform(wordSize)
+$tk_wm
+TAB tabs      = $tab
  |  count     = $cfg(EXEC)
  |
-_/" "#\[$cfg(ICH)\]:"] ;# same prefix as in putv
-    #          [tk windowingsystem] # we believe this a window manager property
+_/" "#\[$cfg(ICH)\]:"] ;# same prefix as in putv;  dumm "
+    #          [tk windowingsystem] # we believe this is a window manager property
 
+    return
+}; # config_print
+
+proc gui_init     {}    {
+    #? initialise GUI
+    _dbx 2 "{}"
+    global cfg prg myX argv IMG
+    if {[catch { package require tablelist } err]} {
+        pwarn "'package tablelist' not found, probably 'tklib' missing; using text layout"
+        set cfg(layout) {text}
+            # cfg(layout) used in create_tab() and create_filtertab()
+            # it's hardcoded set to {text} here if package is missing, that's
+            # working for create_filtertab() as the widgets there are created
+            # only once at startup.
+            # Changing cfg(layout) in the GUI later does only affect creating
+            # tables in the result tab after  osaft_exec(), and will not harm
+            # widgets or functionality created by create_filtertab().
+    }
+    if { [regexp {::tk::icons::question} [image names]] == 0} { unset IMG(help); }
+        # reset if no icons there, forces text (see cfg_buttons)
+
+    font create osaftHead   {*}[font config TkFixedFont;]  -weight bold
+    font create osaftBold   {*}[font config TkDefaultFont] -weight bold
+    font create osaftSlant  {*}[font config TkFixedFont]   -slant italic
+    if {0 == $prg(option)} {    # only if not done in RC-file
+        option add *Button.font osaftBold  ;# if we want buttons more exposed
+        option add *Label.font  osaftBold  ;# ..
+        option add *Text.font   TkFixedFont;
+    }
+
+    # configure according real size
+    set __x         [lindex [wm maxsize .] 0]
+    set __y         [lindex [wm maxsize .] 1]
+    if {$__y < $myX(miny)} { set myX(miny) $__y  }
+    if {$__x < $myX(minx)} { set myX(minx) $__x  }
+    if {$__x > 1000 }      { set myX(minx) "999" }
+    set myX(geoS)   "$myX(minx)x$myX(miny)"
+
+    set __native    "";
+    # next switch is ugly workaround to detect special start methods ...
+    # it also does some special setup for MacOSX
+    switch [tk windowingsystem] {
+        {win32} { set __native "start" }
+        {win64} { set __native "start" }
+        {aqua}  -
+        {Aqua}  { set __native "open"
+                  set cfg(confirm) {};        # Aqua's tk_save* has no  -confirmoverwrite
+                  if {[regexp -- {-(img|image)} $argv]} {
+                      _message warning "(gui_init)" \
+                          "using images for buttons is not recomended on Aqua systems"
+                  } else {
+                      set cfg(bstyle) "text"; # text by default, because Aqua looks nice
+                  }
+                  set myX(miny)   770;        # because fonts are bigger by default
+                }
+    }
+    set myX(geoS)   "$myX(minx)x$myX(miny)"
+
+    # find proper font for tablelist::tablelist; MacOSX is strange ...
+    # usually we should have:  flat6x4, flat7x4, flat7x5, flat7x7, flat8x5,
+    #                          flat9x5, flat9x6, flat9x7, flat10x6,
+    #                          photo7x7, sunken8x7, sunken10x9, or sunken12x11
+    # if no font is found, default will be used, which results in a Tcl error
+    foreach f "flat9x5 flat9x6 flat9x7 flat10x6 flat8x5" {
+        if {[catch {tablelist::tablelist .ttest -arrowstyle $f} err]} { continue }
+        set cfg(tfont) $f
+        destroy .ttest
+        break
+    }
+    _dbx 4 " table font = $cfg(tfont)"
+
+    # search browser, first matching will be used
+    foreach bin " $__native \
+            firefox chrome chromium iceweasel konqueror mozilla \
+            netscape opera safari webkit htmlview www-browser w3m" {
+        set binary [lindex [auto_execok $bin] 0];   # search in $PATH
+        _dbx 4 " browser= $bin $binary"
+        if {[string length   $binary]} {
+            set prg(BROWSER) $binary
+            break
+        }
+    }
+
+    bind . <Control-v> {clipboard get}
+    bind . <Control-c> {clipboard clear ; clipboard append [selection get]}
+    bind . <Key-q>     {exit}
+
+    return
+}; # gui_init
+
+proc gui_main     {}    {
+    global argv0 argv env cfg prg myX hosts
+    gui_init
+
+    #| create toplevel window
+    wm title        . $cfg(TITLE)
+    wm iconname     . [string tolower $cfg(TITLE)]
+    #wm geometry     . $myX(geoS)   ;# use only for small screens
+
+    #| create toplevel GUI
+    set w ""
+    create_main_host_entries  $w ft
+    create_main_quick_buttons $w fc
+    create_main_quick_options $w fo
+    create_main_tabs          $w note
+    create_main_status_line   $w fl
+    create_main_exit_button   $w fq
+    guitheme_init $cfg(bstyle) ;# apply themes
+
+    #| load files, if any
+    foreach f $cfg(files) {
+        if {"STDIN"!=$f && ![file exists $f]} { continue }
+        osaft_load $f
+    }
+
+    #| special test output
+    if {0<$cfg(stdout)} {
+        $cfg(objT) invoke  ;# call button to save on STDOUT
+    }
+
+    #| some verbose output
+    putv " hosts= $hosts(0)"
+    set vm ""      ;# check if inside docker
+    if {[info exist env(osaft_vm_build)]==1} { set vm "($env(osaft_vm_build))" }
+    if {1==$cfg(docker)}                     { set vm "(using $prg(SAFT))" }
+    guistatus_set "$argv0 $vm $argv"
+        # full path and all passed arguments; useful if started from .desktop file
+    if {0 < ($cfg(VERB) + $cfg(DEBUG))} { config_print ; }
+        # must be at end when window was created, otherwise wm data is missing or mis-leading
+
+    #| GUI ready, initialise tracing if required
+    if {0 < $cfg(TRACE)} { trace_buttons }
+
+    return
+}; # gui_main
+
+#_____________________________________________________________________________
+#_____________________________________________________________________ main __|
+
+set doit    0;
+# On some systems (i.e. Android) it could be difficult to pass arguments to
+# this script. Hence we provide alias names to simulate passing options.
+switch $cfg(ICH) {
+    osaft--testtcl.tcl  -
+    o-saft--testtcl.tcl { set cfg(DEBUG)    98; set cfg(quit) 1; set cfg(testtcl) 1; }
+    osaft--d.tcl        -
+    o-saft--d.tcl       { set cfg(DEBUG)    1;  }
+    osaft--trace.tcl    -
+    o-saft--trace.tcl   { set cfg(TRACE)    1;  }
+};# switch cfg(ICH)
+#| main: arguments and options
+foreach arg $argv {
+    switch -glob $arg {
+        --h         -
+        --help      { puts [osaft_about "HELP"]; exit; }
+        --help=opts { osaft_write_opts;          exit; }
+        +VERSION    { puts $cfg(VERSION);        exit; }
+        --version   { puts $cfg(mySID);          exit; }
+        --rc        { osaft_write_rc;            exit; }
+        --nodoc     -
+        --nodocs    -
+        --no-docs   { set   cfg(docs-exe) 1;           }
+        +quit       { set   cfg(quit)   1;             }
+        -docker     -
+        --docker    { config_docker opt;               }
+        --dbx       -
+        --d         { set   cfg(DEBUG)  1;             }
+        --d=*       { set   cfg(DEBUG)  [regsub {^--d=} $arg {}]; }
+        --trace     { set   cfg(TRACE)  1;             }
+        --v         { set   cfg(VERB)   1;             }
+        --gui       { }
+        --image     -
+        --img       { set   cfg(bstyle) "image";       }
+        --text      { set   cfg(bstyle) "text";        }
+        --tip       { set   cfg(TIP)    1;             }
+        --post=*    { set   prg(post)   $arg;          }
+        --pod*      { set   prg(TKPOD)  "podviewer";   }
+         -id=*      { set   prg(docker-id)  [regsub {^-id=}    $arg {}]; }
+        --id=*      { set   prg(docker-id)  [regsub {^--id=}   $arg {}]; }
+         -tag=*     { set   prg(docker-tag) [regsub {^-tag=}   $arg {}]; }
+        --tag=*     { set   prg(docker-tag) [regsub {^--tag=}  $arg {}]; }
+        --load=*    { lappend cfg(files)    [regsub {^--load=} $arg {}]; }
+        --stdin     { lappend cfg(files)    "STDIN";   }
+        --layout=text   { set cfg(layout)   "text" ;   }
+        --layout=table  { set cfg(layout)   "table";   }
+
+        options__for_debugging__only  { set dumm "";   }
+        --test=*    { lappend cfg(files)    [regsub {^--test=} $arg {}];
+                      set   cfg(stdout) 1;
+                      set   cfg(quit)   1;
+                    }
+        --test-tcl  -
+        --testtcl   { set cfg(DEBUG)    98; set cfg(quit) 1; set cfg(testtcl) 1; }
+        --test-o-saft -
+        --test-osaft  -
+        --testosaft { set cfg(DEBUG)    99;            }
+
+        --*         { set exe($arg)     1;             }
+        +*          { set exe($arg)     1; set doit 1; }
+        *           { incr hosts(0); set hosts($hosts(0)) $arg; }
+        default     { pwarn "unknown parameter »$arg«; ignored" }
+    }
 }
+if {0<$cfg(DEBUG)}  { set cfg(VERB) 1; }
+if {0<$cfg(TRACE)}  { trace_commands;  }
+if {0<$cfg(VERB)}   { lappend prg(Ocmd) {+quit} {+version}; }
+if {0<$cfg(docker)} { lappend prg(Ocmd) {docker_status};    }
+
+#| read $cfg(RC) and $cfg(IMG)
+config_read
+
+#| special debug output
+if {99==$cfg(DEBUG)} { puts "$cfg(HELP)"; exit; }
+if {98==$cfg(DEBUG)} {
+    config_print
+    if {0<$cfg(testtcl)} {
+        _message info "$cfg(ICH) --test-tcl" "click \[OK\] to exit"
+    }
+    exit;
+}
+
+gui_main
 
 #| start main (event loop)
 if {1 == $doit}      { osaft_exec . "Start"; } ;# call o-saft.pl if commands are given
-
-if {1 == $cfg(quit)} { putv " exit"; exit }
+if {1 == $cfg(quit)} { putv " exit"; exit }    ;# special for testing with Makefile*
 

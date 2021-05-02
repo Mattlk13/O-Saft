@@ -15,6 +15,8 @@
 #?
 #? OPTIONS
 #?      -h      got it
+#       -help   got it
+#?      -n      just show command to be executed
 #?      -help=* grep for *  in 'o-saft.pl --help'
 # TODO: should also grep in --help=commads and some other programs
 #?      -list   list available programs in ./contrib/ directory
@@ -25,14 +27,24 @@
 #?      -docker start o-saft-docker with remaining arguments
 #?      -id=*   passed to o-saft-docker
 #?      -tag=*  passed to o-saft-docker
+#       -prg="program"
+#               use program instead of  o-saft.pl; intended for debugging only
 #?      -post="program [options]"
-#?              program to pipe output of  o-saft.pl  to
+#?              program in ./contrib to pipe output of  o-saft.pl  to
+#?      -colour alias for  -post=bunt.pl
+#?      -blind  alias for  -post='bunt.pl --blind'
+#?      -line   alias for  -post='bunt.pl --line'
+#?      -less   pipe output of  o-saft.pl  to  less
+#?      -more   pipe output of  o-saft.pl  to  more
 #?      --      pass all remaining arguments to  o-saft.pl  or  o-saft.tcl
 #?
 #? LIMITATIONS
 #?      All option listed above must preceed options to be passed through.
 #?      $0  must be install in the same directory as the tools it will call
 #?          $0.pl  $0.cgi  $0.tcl
+#?
+#?      Option  +VERSION  prints version of this program  and not the version
+#?      of  o-saft.pl .
 #?
 #?      Automatic detection of GUI mode fails, if the starter in the desktop's
 #?      panel (or whatever functionality is used) uses a terminal.
@@ -41,7 +53,9 @@
 #?          $0 +cmd --option target
 #?          $0 -post='bunt.pl'      ' +cmd --option target
 #?          $0 -post='bunt.pl -blind' +cmd --option target
+#?          $0 -colour                +cmd --option target  # same as above
 #?          $0 -gui target
+#           $0 -prd=yeast.pl  +cmd   target
 #?
 #?          $0 -docker +cmd --option target
 #?          $0 -docker -post='bunt.pl'      ' +cmd --option target
@@ -57,7 +71,7 @@
 #       avoid conflicts with same option for  o-saft.pl .
 #
 #? VERSION
-#?      @(#) o-saft 1.21 19/09/30 23:05:39
+#?      @(#) o-saft 1.26 21/04/16 13:26:57
 #?
 #? AUTHOR
 #?      17-dec-17 Achim Hoffmann
@@ -71,7 +85,7 @@ gui=$dir/$ich.tcl
 cgi=$dir/$ich.cgi
 dok=$dir/$ich-docker
     # all tools are prefix with the path $dir to avoid incomplete $PATH settings
-    # then check (below) if tools exists, if not, remove path ans rely on $PATH
+    # then check (below) if tools exists, if not, remove path and rely on $PATH
 [ ! -x "$prg" ] && prg=$ich.pl
 [ ! -x "$gui" ] && gui=$ich.tcl
 [ ! -x "$cgi" ] && cgi=$ich.cgi
@@ -98,7 +112,7 @@ docker_tag=
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        -h  | '-?')
+        -help | -h  | '-?')
             \sed -ne "s/\$0/$ich/g" -e '/^#?/s/#?//p' $0
             \cat <<EoT
  NOTE
@@ -110,7 +124,7 @@ while [ $# -gt 0 ]; do
 EoT
             exit 0
             ;;
-        +VERSION)       echo "1.21"; exit 0; ;;
+        +VERSION)       echo "1.26"; exit 0; ;;
         -help=*)
             such="`expr "$1" ':' '-help=\(.*\)'`"
             args="--help"
@@ -132,8 +146,22 @@ EoT
         -docker | --docker) docker=1    ; ;;
         -id*)           docker_id="$1"  ; ;;
         -tag*)          docker_tag="$1" ; ;;
+        -colour | --colour) post="$contrib/bunt.pl" ; ;;
+        -color  | --color)  post="$contrib/bunt.pl" ; ;;
+        -blind  | --blind)  post="$contrib/bunt.pl --blind" ; ;;
+        -line   | --line)   post="$contrib/bunt.pl --line"  ; ;;
+        -less   | --less)   post="less" ; ;;
+        -more   | --more)   post="more" ; ;;
+        -prg=*) prg="`expr "$1" ':' '-prg=\(.*\)'`" ; ;;  # for debugging only
         -post=*)
-            post="`expr "$1" ':' '-post=\(.*\)'`"
+            post="`expr "$1" ':' '-post=\(.*\)'`" ;
+            cmd=`echo "$post" | awk '{print $1}'`   # remove additional trailing arguments
+            [ -x "$contrib/$cmd" ] && post="$contrib/$post"
+            shift
+            break
+            ;;
+        --post=*)
+            post="`expr "$1" ':' '--post=\(.*\)'`" ;
             cmd=`echo "$post" | awk '{print $1}'`   # remove additional trailing arguments
             [ -x "$contrib/$cmd" ] && post="$contrib/$post"
             shift

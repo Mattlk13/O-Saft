@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## PACKAGE {
 
-#!# Copyright (c) 2019, Achim Hoffmann, sic[!]sec GmbH
+#!# Copyright (c) 2021, Achim Hoffmann
 #!# This  software is licensed under GPLv2. Please see o-saft.pl for details.
 
 package main;   # ensure that main:: variables are used
@@ -48,21 +48,22 @@ package main;   # ensure that main:: variables are used
 use strict;
 use warnings;
 use vars qw(%checks %data %text); ## no critic qw(Variables::ProhibitPackageVars)
+use utf8;
 # binmode(...); # inherited from parent
 
 BEGIN {     # SEE Perl:BEGIN perlcritic
-    my $_me   = $0; $_me   =~ s#.*[/\\]##;
-    my $_path = $0; $_path =~ s#[/\\][^/\\]*$##;
-    unshift(@INC, ".", "./lib", $ENV{PWD}, "/bin"); # SEE Perl:@INC
-    if ($_path !~ m#^[.]/*$#) { # . already added
-        unshift(@INC, "$_path", "$_path/lib") if ($_me ne $_path);
-    }
+    # SEE Perl:@INC
+    my $_me   = $0;     $_me   =~ s#.*[/\\]##;
+    my $_path = $0;     $_path =~ s#[/\\][^/\\]*$##;
+    unshift(@INC, "lib", $ENV{PWD}, "$ENV{PWD}/lib", "/bin");
+    unshift(@INC, "lib/$_path") if ($_path ne $_me and $_path !~ m#^/#);
+    unshift(@INC, $_path);
 }
 
 use osaft;
 use OSaft::Doc::Data;
 
-my  $SID_man= "@(#) o-saft-man.pm 1.303 19/12/03 10:38:56";
+my  $SID_man= "@(#) o-saft-man.pm 1.330 21/02/28 22:48:53";
 my  $parent = (caller(0))[1] || "O-Saft";# filename of parent, O-Saft if no parent
     $parent =~ s:.*/::;
     $parent =~ s:\\:/:g;                # necessary for Windows only
@@ -81,7 +82,7 @@ local $\    = "";
 #_____________________________________________________________________________
 #_________________________________________________________ internal methods __|
 
-sub _get_filename   {   # similar to _y_CMD
+sub _get_filename   {
 # TODO: move to osaft.pm or alike
     my $src = shift || "o-saft.pl";
     foreach my $dir (@INC) {    # find the proper file
@@ -104,11 +105,65 @@ sub _man_dbx        {   # similar to _y_CMD
     return;
 } # _man_dbx
 
+sub _man_use_tty    {   # break long lines of text; SEE Note:tty
+    # set screen width in $cfg{'tty'}->{'width'}
+    _man_dbx("_man_use_tty() ...");
+    return if not defined $cfg{'tty'}->{'width'};
+    my $_len = 80;
+    my $cols = $cfg{'tty'}->{'width'};
+    if (10 > $cols) {   # size smaller 10 doesn't make sense
+        $cols = $ENV{COLUMNS} || 0;  # ||0 avoids perl's "Use of uninitialized value"
+        if ($cols =~ m/^[1-9][0-9]+$/) {    # ensure that we get numbers
+            $cfg{'tty'}->{'width'} = $cols;
+            return;
+        }
+        # try with tput, if it fails try with stty; errors silently ignored
+        $cols = qx(\\tput cols 2>/dev/null) || undef; # quick&dirty
+        if (not defined $cols) {    # tput failed or missing
+            $cols =  qx(\\stty size 2>/dev/null) || $_len; # default if stty fails
+            $cols =~ s/^[^ ]* //;   # stty returns:  23 42  ; extract 42
+        }
+        $cfg{'tty'}->{'width'} = $cols;
+    }
+    $cfg{'tty'}->{'width'} = 80 if (10 > $cfg{'tty'}->{'width'});   # safe fallback
+    _man_dbx("_man_use_tty: " . $cfg{'tty'}->{'width'});
+    return;
+} # _man_use_tty
+
+sub _man_squeeze    {   # break long lines of text; SEE Note:tty
+    # if len is undef, default from %cfg is used
+    my $len   = shift;
+    my $txt   = shift;
+    return $txt if not defined $cfg{'tty'}->{'width'};
+    # if a width is defined, --tty  was used
+    # Keep in mind that  help.txt  is formatted to fit in 80 columns,  hence a
+    # width > 80 does not change the total length of the line (which is always
+    # < 80), but changes the number of left most spaces.
+    $txt =~ s/[\t]/    /g;    # replace all TABs
+    my $max   = $cfg{'tty'}->{'width'} - 2;     # let's have one space right
+    my $ident = ' ' x $cfg{'tty'}->{'ident'};   # default ident spaces
+    if (defined $len) {
+        # break long lines at max size and ident remaining with len
+        $ident = "$cfg{'tty'}->{'arrow'}\n" . ' ' x $len;
+        $txt =~ s/(.{$max})/$1$ident/g;
+    } else {
+        # change left most 8 spaces to specified number of spaces
+        # break long lines at max size
+        # break long lines at max size and ident with specified number of spaces
+        $txt =~ s/\n {8}/$ident/g;              # reduced existing identation
+        $ident = "$cfg{'tty'}->{'arrow'}\n" . $ident;
+        $max--;
+    }
+    #$max--;
+    $txt =~ s/(.{$max})/$1$ident/g;             # squeeze line length
+    return $txt;
+} # _man_squeeze
+
 sub _man_get_title  { return 'O - S a f t  --  OWASP - SSL advanced forensic tool'; }
 sub _man_get_version{
     # ugly, but avoids global variable or passing as argument
     no strict; ## no critic qw(TestingAndDebugging::ProhibitNoStrict)
-    my $v = '1.303'; $v = STR_VERSION if (defined STR_VERSION);
+    my $v = '1.330'; $v = STR_VERSION if (defined STR_VERSION);
     return $v;
 } # _man_get_version
 
@@ -305,34 +360,65 @@ function toggle_handler(){
 }
 </script>
 <style>
- .h             {margin-left:     1em;border:0px solid #fff;}
+  /* variable definitions */
+  :root {
+    /* color and background */
+    --bg-osaft:     #fff;
+    --bg-blue:      #226;               /* darkblue  */
+    --bg-head:      linear-gradient(#000,#fff);    /* black,white */
+    --bg-mbox:      rgba(0,0,0,0.9);
+    --bg-mdiv:      linear-gradient(#fff,#226);
+    --bg-button:    linear-gradient(#d3d3d3,#fff);  /* lightgray */
+    --bg-start:     linear-gradient(#ffd700,#ff0);  /* gold */
+    --bg-start-h:   linear-gradient(#ff0,#ffd700);  /* gold */
+    --bg-hover:     #d3d3d3;            /* lightgray */
+    --bg-literal:   #d3d3d3;            /* lightgray */
+    --border-0:     0px solid #fff;
+    --border-1:     1px solid #080;     /* green */
+    --border-w:     1px solid #fff;     /* white */
+  }
+ .h             {margin-left:     1em;border:var(--border-0);}
  .l             {margin-left:     2em;}
  .r             {float:right;}
  .b, div[class=h] > a, input[type=submit] {
-                 margin:        0.1em;padding:0px 0.5em 0px 0.5em; text-decoration:none; font-weight:bold; color:#000; border:1px solid black; border-radius:2px; box-shadow:1px 1px 3px #666; background:linear-gradient(#fff, #ddd);}
- a[class="b r"]:hover, div[class=h] > a:hover {background:linear-gradient(#ddd, #fff);}
+                 margin:        0.1em;padding:0px 0.5em 0px 0.5em; text-decoration:none; font-weight:bold; color:#000; border:var(--border-1); border-radius:2px; box-shadow:1px 1px 3px #666; background:var(--bg-button);}
+ a[class="b r"]:hover, div[class=h] > a:hover {background:var(--bg-button);}
  p > a[class="b"] {margin-left: -2em; }
- p > a[class="b"]:hover {background:linear-gradient(#ddd, #fff);}
- .c             {font-size:12pt !important;border:1px none black;font-family:monospace;background-color:lightgray;} /* white-space:pro */
- .q             {border:0px solid white;}
+ p > a[class="b"]:hover         {background:var(--bg-button);}
+ .c             {padding:0px 3px 0px 3px;            border:var(--border-0);font-size:12pt !important; font-family:monospace;background:var(--bg-literal);} /* white-space:pro */
+ .q             {border:var(--border-0);}
  p              {margin-left:     2em;margin-top:0;}
  td             {                     padding-left:    1em;}
- h2, h3, h4, h5 {margin-bottom: 0.2em;}
+ h2             {margin:       -0.3em;margin-bottom: 0.5em;height:1.5em;padding:1em;background:var(--bg-head);color:white;border-radius:0px 0px 20px 20px;box-shadow:0 5px 5px #c0c0c0; }
+ h3, h4, h5     {margin-bottom: 0.2em;}
  body > h2      {margin-top:   -0.5em;padding:  1em; height:1.5em;background-color:black;color:white;}
  body > h4      {margin-left:     1em;}
- b              {margin-left:     1em;} /* for discrete commands */
+ b              {margin-left:     1em;}     /* for discrete commands */
  li             {margin-left:     3em;}
- div            {                     padding:0.5em; border:1px solid green;}
- div[class=c]   {margin-left:     4em;padding:0.1em; border:0px solid green;}
- div[class=n]   {                                    border:0px solid white;}
+ div            {                     padding:0.5em; border:var(--border-1);}
+ div[class=c]   {margin-left:     4em;padding:0.1em; border:var(--border-0);}
+ div[class=n]   {                                    border:var(--border-0);}
+ form           {font-size:       20px; }   /* chromium hack */
  form           {                     padding:1em;}
- span           {margin-bottom:   2em;font-size:120%;border:1px solid green;}
- label[class=i] {margin-right:    1em;min-width:8em; border:1px solid white;display:inline-block;}
- label:hover[class=i]{background-color:lightgray;border-bottom:1px solid green;}
+ span           {margin-bottom:   2em;font-size:120%;border:var(--border-1);}
+ h2 > span      {                                    border:var(--border-0);}
+ label[class=i] {margin-right:    1em;min-width:8em; border:var(--border-w);display:inline-block;}
+ label[class=i]:hover           {background:var(--bg-hover);border-bottom:var(--border-1);}
+ input[type=submit]             {background:var(--bg-start);min-width:8em;text-align:left;}
+ input[type=submit]:hover       {background:var(--bg-start-h);}
  input          {margin-right:  0.5em;}
- input[type=submit]      {background:linear-gradient(gold, #ff0);min-width:8em;text-align:left;}
- input[type=submit]:hover{background:linear-gradient(#ff0, gold);}
  fieldset > p   {margin:           0px;padding:0.5em;background-color:#ffa;}
+ /* dirty hack for mobile-friendly A tag's title= attribute;
+  * placed left bound below tag; browser's title still visible
+  * does not work for BUTTON and INPUT tags
+  */
+ [title]        {position:  relative; }
+ a[class=b][title]:hover:after, a[class='b r'][title]:hover:after {
+    content: attr(title);
+    position:absolute; z-index:99; top:100%; left:-1em;
+    border: 2px solid darkgrey; border-radius:2px;
+    background-color:rgba(0,0,0,0.8); color:white;
+    font-weight:normal; padding:0.3em; }
 </style>
 </head>
 <body>
@@ -350,13 +436,14 @@ sub _man_html_warn  {
     _man_dbx("_man_html_warn() ...");
     print << 'EoHTML';
  <style>
-  /* message box "Note", if necessary */
-  .m            {opacity:1; pointer-events:none; position:fixed; transition:opacity 400ms ease-in; background:rgba(0,0,0,0.9); top:0; right:0; bottom:0; left:0; z-index:9; }
-  .m > div      {position:relative; width:35em; margin:13% auto; padding:1em; border-radius:8px;   background:#fff; background:linear-gradient(#fff, #226); }
+  /* message box "Note", if necessary # TODO: font-size not working in firefox */
+  .m            {opacity:1; pointer-events:none; position:fixed; transition:opacity 400ms ease-in; background:var(--bg-mbox); top:0; right:0; bottom:0; left:0; z-index:9; }
+  .m > div      {position:relative; width:35em; margin:13% auto; padding:1em; border-radius:8px;   background:var(--bg-mdiv); font-size:150%; }
+  .m > div > p  {font-size:120%; }
   .m > div > a  {opacity:1; pointer-events:auto; }
-  .m > div > a  {position:absolute; width:1.1em; top:0.1em;      right:0.2em; line-height:1.1em;   background:#226; color:#fff; text-align:center;  text-decoration:none; font-weight:bold; border-radius:8px; box-shadow:1px 1px 3px #5bb; }
+  .m > div > a  {position:absolute; width:1.1em; top:0.1em;      right:0.2em; line-height:1.1em;   background:var(--bg-blue); color:#fff; text-align:center;  text-decoration:none; font-weight:bold; border-radius:8px; box-shadow:1px 3px 3px #5bb; }
   .m > div > a:hover  {background: #5bb; }
-  .m > div > h3       {margin:-0.8em; border-bottom:1px solid black; margin-bottom:1em; }
+  .m > div > h3       {margin:-0.8em; border-bottom:var(--border-1); margin-bottom:1em; }
   .m > div > h3:before{content:"\00a0\00a0\00a0" }
  </style>
  <div id="warn" class="m"> <div>
@@ -491,9 +578,10 @@ sub _man_html_foot  {
     my $vers    = _man_get_version();
     print << "EoHTML";
  <a href="https://github.com/OWASP/O-Saft/"   target=_github >Repository</a> &nbsp;
- <a href="https://github.com/OWASP/O-Saft/blob/master/o-saft.tgz" target=_tar class=b >Download (stable)</a><br>
- <a href="https://owasp.org/index.php/O-Saft" target=_owasp  >O-Saft Home</a>
- <hr><p><span style="display:none">&copy; sic[&#x2713;]sec GmbH, 2012 - 2019</span></p>
+ <a href="https://github.com/OWASP/O-Saft/blob/master/o-saft.tgz" target=_tar class=b >Download (stable)</a>
+ <a href="https://github.com/OWASP/O-Saft/archive/master.zip" target=_tar class=b >Download (newest)</a><br><br>
+ <a href="https://owasp.org/www-project-o-saft/" target=_owasp  >O-Saft Home</a>
+ <hr><p><span style="display:none">&copy; Achim Hoffmann 2021</span></p>
  <script>
   osaft_title("$title", "$vers");
   if (schema_is_file()===true) { osaft_disable_help(); }
@@ -700,10 +788,11 @@ sub _man_foot       {
 
 sub _man_opt        {
     #? print line in  "KEY - VALUE"  format
-    my @args = @_;
+    my @args = @_; # key, sep, value
     my $len  = 16;
        $len  = 1 if ($args[1] eq "="); # allign left for copy&paste
-    printf("%${len}s%s%s\n", @args);
+    my $txt  = sprintf("%${len}s%s%s\n", @args);
+    print _man_squeeze((16+length($_[1])), $txt);
     return;
 } # _man_opt
 
@@ -790,8 +879,8 @@ sub _man_pod_head   {
 #!/usr/bin/env perldoc
 #?
 # Generated by o-saft.pl .
-# Unfortunatelly the format in @help is incomplete,  for example proper  =over
-# and corresponding =back  paragraph is missing. It is mandatory arround =item
+# Unfortunately the format in  @help is incomplete,  for example proper  =over
+# and corresponding =back  paragraph is missing. It is mandatory around  =item
 # paragraphs. However, to avoid tools complaining about that,  =over and =back
 # are added to each  =item  to avoid error messages in the viewer tools.
 # Hence the additional identations for text following the =item are missing.
@@ -852,11 +941,11 @@ Generated with:
 
 EoHelp
     print "=cut\n\n";           # SEE POD:Syntax
-    _man_doc_pod('abbr', "-");  # this is for woodoo, see below
-    _man_doc_pod('rfc',  "-");  # this is for woodoo, see below
+    _man_doc_pod('abbr', "-");  # this is for voodoo, see below
+    _man_doc_pod('rfc',  "-");  # this is for voodoo, see below
     print <<'EoHelp';
 
-# begin woodoo
+# begin voodoo
 
 # Some documentation is plain text, which is  DATA  in Perl sources. As such,
 # it  is  not detected as source,  not as comment,  and  not as documentation
@@ -877,7 +966,7 @@ EoHelp
 # results in a wise manner. Measuring quality is more than just automatically
 # generated statistics!
 
-# end woodoo
+# end voodoo
 
 EoHelp
     return;
@@ -1018,6 +1107,67 @@ sub _man_cmd_from_rcfile {
 #_____________________________________________________________________________
 #__________________________________________________________________ methods __|
 
+sub man_help_brief  {
+    #? print overview of help commands (invoked with --h)
+    # TODO: get this data from internal data structure when it is ready ...
+    # extract all --help= options with their description from @help
+    # using a foreach loop instead of regex to avoid memory polution
+    _man_dbx("man_help_brief() ...");
+    my %opts;
+    my $skip  = 1;
+    my $idx   = 0;  # perl hashes are sorted randomly, we want to keep the sequence in @help
+    my $key   = "";
+    foreach my $line (@help) {  # note: @help is in POD format
+        # we expect somthing like:
+        #    =head2 Options for help and documentation
+        #    =head3 --help=cmds
+        #
+        #          Show available commands; short form.
+        #
+        #    ...
+        #
+        $skip = 1 if ($line =~ m/^=head2\s+Options for /);
+        $skip = 0 if ($line =~ m/^=head2\s+Options for help/);
+        next      if ($line =~ m/^=head2\s+Options for help/);
+        next if (1 == $skip);
+        next if ($line =~ m/^\s*$/);
+        chomp $line;
+        #_dbx "$line" if $skip == 0;
+        if ($line =~ m/^=head3\s+--h/) {    # --h and --help and --help=*
+            $idx++;
+            $key  = $line;
+            $key  =~ s/^=head3\s+//;
+            $opts{$idx}->{'opt'} = $key;
+            next;
+        }
+        $line =~ s/^\s*//;                  # normalise
+        $line =~ s![IX]&([^&]*)&!$1!g;      # remove markup
+        $line =  sprintf("\n%17s %s", " ", $line) if (defined $opts{$idx}->{'txt'});
+        $opts{$idx}->{'txt'} .= $line;
+    }
+    print "\n";
+    _man_head(15, "Option", "Description");
+    foreach my $key (sort {$a <=> $b} keys %opts) {
+        printf("%-17s %s\n", $opts{$key}->{'opt'}, $opts{$key}->{'txt'}||"");
+    }
+    _man_foot(15);
+    print "\n";
+    _man_head(15, "Command", "Description");
+    print <<"EoHelp";
++info             Overview of most important details of the SSL connection.
++cipher           Check target for ciphers (using libssl).
++check            Check the SSL connection for security issues.
++protocols        Check for protocols supported by target.
++vulns            Check for various vulnerabilities.
+EoHelp
+    _man_foot(15);
+    my $opt = "";
+       $opt = " --header" if (0 < $cfg_header); # be nice to the user
+    printf("\nFor more options  see: $cfg{me}$opt --help=opt");
+    printf("\nFor more commands see: $cfg{me}$opt --help=commands\n\n");
+    return;
+} # man_help_brief
+
 sub man_commands    {
     #? print commands and short description
     # data is extracted from $parents internal data structure
@@ -1027,7 +1177,7 @@ sub man_commands    {
     # SEE Help:Syntax
     print "\n";
     _man_head(15, "Command", "Description");
-    print <<"EoHelp";
+    my $txt = <<"EoHelp";
                   Commands for information about this tool
 +dump             Dumps internal data for SSL connection and target certificate.
 +exec             Internal command; should not be used directly.
@@ -1073,7 +1223,9 @@ sub man_commands    {
 
 EoHelp
 
-    print _man_cmd_from_source();
+    print _man_squeeze(18, $txt);
+
+    print _man_squeeze(18,_man_cmd_from_source());
     print _man_cmd_from_rcfile();
     _man_foot(15);
     print "\n";
@@ -1085,7 +1237,7 @@ sub man_table       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     #? header of table is not printed if $typ is cfg-*
     #  NOTE critic: McCabe 22 (tested 5/2016) is not that bad here ;-)
     my $typ = shift;# NOTE: lazy matches against $typ below, take care with future changes
-       $typ =~ s/^cipher(pattern|range)/$1/;# normalize: cipherrange and range are possible
+       $typ =~ s/^cipher(pattern|range)/$1/;# normalise: cipherrange and range are possible
     my %types = (
         # typ        header left    separator  header right
         #-----------+---------------+-------+-------------------------------
@@ -1112,7 +1264,7 @@ sub man_table       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     } else {
        if ($typ =~ m/(?:^cfg[_-]|[_-]cfg$)/) {
            # the purpose of cfg_* is to print the results in a format so that
-           # they can be used with copy&paste as command line arguments
+           # they can be used with copy&paste as command-line arguments
            # simply change the separator to =  while other headers are unused
            # (because no header printed at all)
            $sep = "=" if ($typ =~ m/(?:^cfg[_-]|[_-]cfg$)/);
@@ -1128,6 +1280,7 @@ sub man_table       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     # first only lists, which cannot be redefined with --cfg-*= (doesn't make sense)
 
     _man_doc_opt($typ, $sep, 'opt');    # abbr, rfc, links, ...
+    # return; 
 
     if ($typ eq 'compl') { _man_opt($_, $sep, $cfg{'compliance'}->{$_})    foreach (sort keys %{$cfg{'compliance'}}); }
 
@@ -1171,7 +1324,7 @@ sub man_table       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
                 $txt = join(" ", @{$cfg{$key}});
             }
             $key =~ s/^cmd.// if ($typ =~ m/cfg/);
-                # $key in %cfg looks like  cmd-sni, but when configuering the
+                # $key in %cfg looks like  cmd-sni, but when configuring the
                 # key in RC-FILE it looks like  --cfg_cmd=sni=   ...
             _man_cfg($typ, $key, $sep, $txt);
         }
@@ -1216,7 +1369,7 @@ sub man_table       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     } else {
         # additional message here is like a WARNING or Hint,
         # do not print it if any of them is disabled
-        return if (($cfg{'warning'} + $cfg{'out_hint'}) < 2);
+        return if (($cfg{'out'}->{'warning'} + $cfg{'out'}->{'hint'}) < 2);
         print <<"EoHelp";
 = Format is:  KEY=TEXT ; NL, CR and TAB are printed as \\n, \\r and \\t
 = (Don't be confused about multiple  =  as they are part of  TEXT.)
@@ -1246,8 +1399,9 @@ sub man_alias       {
     #
     print "\n";
     _man_head(27, "Alias (regex)         ", "command or option   # used by ...");
-    my $fh   = undef;
-    my $p    = '[._-]'; # regex for separators as used in o-saft.pl
+    my $txt =  "";
+    my $fh  = undef;
+    my $p   = '[._-]'; # regex for separators as used in o-saft.pl
     if (open($fh, '<:encoding(UTF-8)', _get_filename("o-saft.pl"))) { # need full path for $parent file here
         # TODO: o-saft.pl hardcoded, need a better method to identify the proper file
         while(<$fh>) {
@@ -1263,13 +1417,19 @@ sub man_alias       {
             $regex =~ s/\(\?:/(/g;  # remove ?: in all groups
             $regex =~ s/\[\+\]/+/g; # replace [+] with +
             $regex =~ s/\$p\?/-/g;  # replace variable
+            # check if alias is command or option
+            if ($alias !~ m/^[+-]/) {
+                # look not like command or option, use comment
+                $alias = $commt if ($commt =~ m/^[+-]/);
+            }
             if (29 > length($regex)) {
-                printf("%-29s%-21s# %s\n", $regex, $alias, $commt);
+                $txt = sprintf("%-29s%-21s# %s\n", $regex, $alias, $commt);
             } else {
                 # pretty print if regex is to large for first column
-                printf("%s\n", $regex);
-                printf("%-29s%-21s# %s\n", "", $alias, $commt);
+                $txt  = sprintf("%s\n", $regex);
+                $txt .= sprintf("%-29s%-21s# %s\n", "", $alias, $commt);
             }
+            print _man_squeeze(29, $txt);
         }
         close($fh); ## no critic qw(InputOutput::RequireCheckedClose)
     }
@@ -1285,7 +1445,7 @@ EoHelp
 
 sub man_toc         {
     #? print help table of contents
-    my $typ     = lc(shift) || "";      # || to avoid uninitialized value
+    my $typ     = lc(shift) || "";      # || to avoid uninitialised value
     _man_dbx("man_toc() ..");
     foreach my $txt (grep{/^=head. /} @help) {  # note: @help is in POD format
         next if ($txt !~ m/^=head/);
@@ -1297,6 +1457,7 @@ sub man_toc         {
             # just =head1 is lame, =head1 and =head2 and =head3 is too much
             $txt =~ s/^=head([12]) *(.*)/{print "  " x $1, $2,"\n"}/e; # use number from =head as ident
         }
+        # TODO:  _man_squeeze(6, $txt); # not really necessary
     }
     return;
 } # man_toc
@@ -1362,7 +1523,7 @@ sub man_cgi         {
 } # man_cgi
 
 sub man_wiki        {
-    #? print documentation for o-saft.pl in mediawiki format (to be used at owasp.org)
+    #? print documentation for o-saft.pl in mediawiki format (to be used at owasp.org until 2019)
     #? recommended usage:   $0 --no-warning --no-header --help=gen-wiki
     my $mode =  shift;
         # currently only mode=colon is implemented to print  :*  instead of *
@@ -1378,7 +1539,7 @@ sub man_wiki        {
 
 sub man_help        {
     #? print complete user documentation for o-saft.pl as plain text (man-style)
-    my $label   = lc(shift) || "";      # || to avoid uninitialized value
+    my $label   = lc(shift) || "";      # || to avoid uninitialised value
     my $anf     = uc($label);
     my $end     = "[A-Z]";
     _man_dbx("man_help($anf, $end) ...");
@@ -1401,6 +1562,7 @@ sub man_help        {
     $txt =~ s/\nS&([^&]*)&/\n$1/g;
     $txt =~ s/[IX]&([^&]*)&/$1/g;       # internal links without markup
     $txt =~ s/L&([^&]*)&/"$1"/g;        # external links, must be last one
+    $txt =  _man_squeeze(undef, $txt);
     if (0 < (grep{/^--v/} @ARGV)) {     # do not use $^O but our own option
         # some systems are tooo stupid to print strings > 32k, i.e. cmd.exe
         print "**WARNING: using workaround to print large strings.\n\n";
@@ -1450,6 +1612,7 @@ sub printhelp       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     #  NOTE critic: as said: *this code is a simple dispatcher*, that's it
     my $hlp = shift;
     _man_dbx("printhelp($hlp) ...");
+    _man_use_tty();
     # NOTE: some lower case strings are special
     man_help('NAME'),           return if ($hlp =~ /^$/);           ## no critic qw(RegularExpressions::ProhibitFixedStringMatches)
     man_help('TODO'),           return if ($hlp =~ /^todo$/i);      ## no critic qw(RegularExpressions::ProhibitFixedStringMatches)
@@ -1478,6 +1641,7 @@ sub printhelp       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     man_cgi(),                  return if ($hlp =~ /^(gen-)?cgi$/i);
     man_alias(),                return if ($hlp =~ /^alias(es)?$/);
     man_commands(),             return if ($hlp =~ /^commands?$/);
+    return man_help_brief()            if ($hlp =~ /^help_brief$/);
     # anything below requires data defined in parent
     man_table('rfc'),           return if ($hlp =~ /^rfcs?$/);
     man_table('links'),         return if ($hlp =~ /^links?$/);
@@ -1493,21 +1657,23 @@ sub printhelp       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
         # we do not allow --help=cfg-cmds or --help=cfg-checks due to conflict
         #    with --help=cmds (see next condiftion);  since 19.01.19
     if ($hlp =~ /^cmds$/i)      { # print program's commands
+        # no need for _man_squeeze()
         print "# $parent commands:\t+"     . join(' +', @{$cfg{'commands'}});
         return;
     }
     if ($hlp =~ /^legacys?$/i)  { # print program's legacy options
+        # no need for _man_squeeze()
         print "# $parent legacy values:\t" . join(' ',  @{$cfg{'legacys'}});
         return;
     }
     if ($hlp =~ /^help$/) {
-        #my $hlp = OSaft::Doc::Data::get("help.txt", $parent, $version);
+        #my $hlp = OSaft::Doc::Data::get("help.txt", $parent, $version); # already in @help
         my $txt  = "";
         foreach (@help) { $txt .= $_ if (m/Options for help and documentation/..m/Options for all commands/); };
             # TODO: quick&dirty match against to fixed strings (=head lines)
         $txt =~ s/^=head.//msg;
         $txt =~ s/Options for all commands.*.//msg;
-        print "$txt";
+        print _man_squeeze(undef, $txt);
         #man_help('Options for help and documentation');
         return;
     }
@@ -1516,14 +1682,19 @@ sub printhelp       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
         foreach my $line (@txt) { $line =~ s/^=head. *//}       # remove leading markup
         my($end) = grep{$txt[$_] =~ /^Options vs./} 0..$#txt;   # find end of OPTIONS section
         print join('', "OPTIONS\n", splice(@txt, 0, $end));     # print anything before end
+        # no need for _man_squeeze()
         return;
     }
     if ($hlp =~ m/^Tools$/i) {    # description for O-Saft tools
-        print OSaft::Doc::Data::get("tools.txt", $parent, $version);
+        my @txt = OSaft::Doc::Data::get("tools.txt", $parent, $version);
+        #print _man_squeeze(undef, "@txt"); # TODO: does not work well here
+        print @txt;
         return;
     }
     if ($hlp =~ m/^Program.?Code$/i) { # print Program Code description
-        print OSaft::Doc::Data::get("coding.txt", $parent, $version);
+        my @txt = OSaft::Doc::Data::get("coding.txt", $parent, $version);
+        #print _man_squeeze(undef, "@txt"); # TODO: does not work well here
+        print @txt;
         return;
     }
     src_grep("exit="),          return if ($hlp =~ /^exit$/i);
@@ -1534,26 +1705,18 @@ sub printhelp       {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
 } # printhelp
 
 sub _main_man       {   # needs not to be _main unless used as Perl package
-    my $arg = shift;
+    my $arg = shift || "--help";    # without argument print own help
     ## no critic qw(InputOutput::RequireEncodingWithUTF8Layer)
     #  SEE Perl:binmode()
     binmode(STDOUT, ":unix:utf8");
     binmode(STDERR, ":unix:utf8");
-    if ($arg =~ m/--?h(elp)?$/x) {
-        # printf("# %s %s\n", __PACKAGE__, $VERSION);  # FIXME: if it is a Perl package
-        printf("# %s %s\n", __FILE__, $version);
-        if (eval {require POD::Perldoc;}) {
-            # pod2usage( -verbose => 1 );
-            exec( Pod::Perldoc->run(args=>[$0]) );
-        }
-        if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
-            printf("# no POD::Perldoc installed, please try:\n  perldoc $0\n");
-        }
-    } else {
-        $arg =  $ARGV[0];
-        $arg =~ s/--(?:help|test)[_.=-]?//; # allow --test-* and --help=* and simply *
-        printhelp($arg);
-    }
+    print_pod($0, __FILE__, $SID_man)   if ($arg =~ m/--?h(elp)?$/x);   # print own help
+    # else
+    $arg =  $ARGV[0];
+    $arg =~ s/--help[_.=-]?//;  # allow --help=* and simply *
+    $arg =~ s/--test[_.=-]?//;  # allow --test-* also,
+        # testing this module is technically the same as getting the text
+    printhelp($arg);
     exit 0;
 } # _main_man
 
@@ -1601,9 +1764,9 @@ see  L<METHODS>  below.
 
 =item * require q{o-saft-man.pm}; printhelp($format); # in Perl code
 
-=item * o-saft-man.pm --help        # on command line will print help
+=item * o-saft-man.pm --help        # on command-line will print help
 
-=item * o-saft-man.pm [<$format>]   # on command line
+=item * o-saft-man.pm [<$format>]   # on command-line
 
 =back
 
@@ -1714,7 +1877,7 @@ In a perfect world it would be extracted from there (or vice versa).
 
 =head1 VERSION
 
-1.303 2019/12/03
+1.330 2021/02/28
 
 =head1 AUTHOR
 
@@ -1733,6 +1896,8 @@ _main_man(@ARGV) if (not defined caller);
 
 # SEE Note:Documentation (in o-saft.pl)
 
+__END__
+
 =pod
 
 =head1 Annotations, Internal Notes
@@ -1743,7 +1908,7 @@ For details about our annotations, please SEE  Annotations,  in o-saft.pl.
 
 =head2 Perlcritic:LocalVars
 
-Perl::Critic  complains that the variable $a should be localized in of the
+Perl::Critic  complains that the variable $a should be localised in of the
 code, this is wrong,  because it is exactly the purpose to find this value
 (other settings) in other lines.
 Hence  "no critic Variables::RequireLocalizedPunctuationVars"  needs to be
@@ -1759,13 +1924,13 @@ The text for documentation is derivied from "help.txt" aka @help using:
 This text contains some  simple (intermediate) markup,  which then will be
 transformed to the final markup, such as HTML, POD, wiki.
 Some sections in that text are handled special or needs to be completed.
-These specialsections are mainly identified by line starting as follows:
+These special sections are mainly identified by lines starting as follows:
 
     Commands for ...
     Commands to ...
-    Descrete commands to test ...
-    Option for ...
-    Option to ...
+    Discrete commands to test ...
+    Options for ...
+    Options to ...
 
 These strings are hardcoded here. Take care when changing "help.txt".
 See also "OSaft/Doc/Data.pm".
@@ -1779,6 +1944,18 @@ The special POD keywords  =pod  and  =cut  cannot be used as  literal text
 in particular in here documents, because (all?) most tools  extracting POD
 from this file (for example perldoc) would be confused.
 Hence these keywords need to be printed in a separate statement.
+
+=head3 POD:Dragons
+
+POD's  =head2  cannot contain  ()  literally,  it needs at least one space
+between  (  and  ) , otherwise formatting will be wrong.
+
+POD's  CE<lt>$somethingE<gt>  Does not print  "$something"  but simply  $something
+unless  $somthing  contains  =  or  *  character, i.e.  $some=thing. Hence
+we use  IE<lt>$somethingE<gt>  instead.
+
+POD does not support nested formatting, at least no prober syntax could be
+found.
 
 
 =head2 HTML:HTML
@@ -1813,7 +1990,7 @@ The HTML page with the form for the CGI should look as follows:
  +-----------------------------------------------------------------------+
  | Help: [help] [commands] [checks] [options] [FAQ] [Glossar] [ToDo]     H
  |+--------------------------------------------------------------------+ H
- || Hostname: [_________________________________] [start]              c |
+ || Hostname: [_________________________________] [+check]             c |
  ||                                                                    c |
  ||   [+check]  Check SSL connection ...                               c |
  ||   [+cipher] Overview of SSL connection ...                         c |
@@ -1831,6 +2008,7 @@ The HTML page with the form for the CGI should look as follows:
  ||| ( ) --opt                                                       o | |
  ||| (   --opt=[________]                                            o | |
  ||| ...                                                             o | |
+ ||| [^] [start]                                                     o | |
  ||+-----------------------------------------------------------------+ | |
  |+--------------------------------------------------------------------+ |
  +-----------------------------------------------------------------------+
@@ -1843,14 +2021,14 @@ be passed as QUERY_STRING to o-saft.cgi (which is the form's action), when
 The Interfase (web page) consist of following sections:
 
   T    title
-  H    line with buttons openening new TAB with corresponding help text
+  H    line with buttons opening a new TAB with corresponding help text
   c    input field for the hostname (target) and buttons for the most used
        commands
   O    Options button opens the section with the most often used options
   q    list with the most often used options, and the button [Full GUI] to
        show all available commands and options
   o    all available commands and options,  and the button [Simple GUI] to
-       to switch back to the simple list of options
+       switch back to the simple list of options
 
 
 =head2 HTML:INPUT

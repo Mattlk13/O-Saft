@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #?
 #? NAME
-#?      $0 - postprocess to colourize output of o-saft.pl
+#?      $0 - postprocess to colourise output of o-saft.pl
 #?
 #? SYNOPSIS
 #?      o-saft.pl | $0 [OPTIONS]
@@ -12,18 +12,20 @@
 #? OPTIONS
 #?      --h     got it
 #?      --test  simple self-testing
-#?      --line  colourize complete line
-#?      --word  colourize special words
+#?      --line  colourise complete line
+#?      --word  colourise special words
 #?      --blind use blue instead of green
 #?      --purple use purple instead of yellow
 #?               purple may be better readable on light backgrounds
-#?      --italic colourize special words and additionally print "label texts:"
+#?      --italic colourise special words and additionally print "label texts:"
 #?               with italic characters
 #?              "label text:" is all text left of first : including :
 #?      --NUM   if a number, change assumed terminal width to NUM
 #?              (used for padding text on the right);  default: terminal width
 #?
 #? LIMITATIONS
+#?      Uses tput or stty to detect current terminal with. If both fail, 80 is
+#?      used as default.
 #
 # HACKER's INFO
 #       Feel free to write your own code. You just need to add/modify the code
@@ -32,10 +34,10 @@
 #       How it workd, see function  testme  below calling with  $0 --test
 #?
 #? VERSION
-#?      @(#) bunt.pl 1.11 19/11/05 01:13:59
+#?      @(#) bunt.pl 1.17 21/04/23 11:12:32
 #?
 #? AUTHOR
-#?      08-jan-16 Achim Hoffmann _at_ sicsec .dot. de
+#?      08-jan-16 Achim Hoffmann
 #?
 # -----------------------------------------------------------------------------
 
@@ -46,6 +48,7 @@ use charnames qw( :full );
 our ($VERSION) = -1;   # dummy assignment to keep `perlcritic -s ...' silent
 
 ## no critic qw(ValuesAndExpressions::ProhibitMagicNumbers)
+## no critic qw(RegularExpressions::RequireExtendedFormatting)
 
 my $ich   = $0; $ich =~ s#.*[/\\]##;
 sub _warn(@) { my @args = @_; print STDERR "[$ich]: **", @args, "\n"; return; }
@@ -58,7 +61,7 @@ if (defined $ENV{TERM}) {
 	# probably better exit here
 
 # --------------------------------------------- internal variables; defaults
-my $mode    = 'word';   # default: colourize words
+my $mode    = 'word';   # default: colourise words
 my $italic  = 0;        # default: nothing italic
 my $_LEN    = 80;       # default: 80 characters per line; -1 for unsupported terminals
 			# set to termial width below
@@ -69,8 +72,6 @@ if (defined $ENV{ComSpec}) {    # supported systems do not have it, usually ..
 	# Note that  cmd.exe and command.exe  do not support colours, at least
 	# not per word or line. There exists some alternates like  ansicmd.exe
 	# or  cecho.exe,  which are not supported herein (not tested if loaded
-	# modules support them). If any of these alternates mudt be supported,
-	# feel free to hack the code below.  Meanwhile,  colourizing for these
 	# dumb terminals is simply disabled.
 	# Hint to get the number of columns in cmd.exe:
 	#       $c= qx(mode);
@@ -82,7 +83,12 @@ if (defined $ENV{ComSpec}) {    # supported systems do not have it, usually ..
 	$_LEN = -1;
 } else {
     if ($^O !~ m/MSWin32/) {
-	$cols = qx(\\tput cols); # quick&dirty
+	# try with tput, if it fails try with stty
+	$cols = qx(\\tput cols 2>/dev/null) || undef; # quick&dirty
+	if (not defined $cols) {    # tput failed or missing
+	    $cols =  qx(\\stty size 2>/dev/null) || $_LEN; # default if stty fails
+	    $cols =~ s/^[^ ]* //;   # stty returns:  23 42  ; extract 42
+	}
     } else {
 	my $rows;
 	$cols = $ENV{COLUMNS};
@@ -238,6 +244,7 @@ sub testme () {
 
 # --------------------------------------------- options
 while ( $#ARGV >= 0 ) {
+        ## no critic qw(RegularExpressions::RequireExtendedFormatting)
 	my $arg = shift;
 	my $fh;
 	my $dumm;
@@ -285,7 +292,7 @@ sub bgcyan ($) {
 }
 
 ## no critic qw(InputOutput::ProhibitInteractiveTest)
-#  it's the authors opinion that the perlish  -t  is better (human) readable
+#  it's the author's opinion that the perlish  -t  is better (human) readable
 if (-t STDIN) {
 	_warn("ERROR text on STDIN expected; exit");
 	exit 2;
@@ -293,7 +300,8 @@ if (-t STDIN) {
 ## use critic
 
 my $txt = "";
-while (my $line = <STDIN>) {
+while (my $line = <>) {
+        ## no critic qw(RegularExpressions::RequireExtendedFormatting)
 	$_ = $line; # = $_;
 	if ("$line" =~ m/^\s*$/) { print "\n"; next; } # speed!
 	#dbx print "DBX: $_";
@@ -313,24 +321,30 @@ while (my $line = <STDIN>) {
 	#} all modes
 
 	if ($mode eq "line") {
-		/<<[^>]*>>/     && do { print cyan( "$line"); next; };
-		/yes.*WEAK/i    && do { print red(  "$line"); next; };
-		/yes.*LOW/i     && do { print red(  "$line"); next; };
-		/yes.*MEDIU/i   && do { print brown("$line"); next; };
-		/yes.*HIGH/i    && do { print green("$line"); next; };
-		/yes$/          && do { print green("$line"); next; };
-		/no$/           && do { print brown("$line"); next; };
-		/no .*/         && do { print red(  "$line"); next; };
+		/<<[^>]*>>/         && do { print cyan( "$line"); next; };
+		/yes.*WEAK/i        && do { print red(  "$line"); next; };
+		/yes.*LOW/i         && do { print red(  "$line"); next; };
+		/yes.*MEDIUM/i      && do { print brown("$line"); next; };
+		/yes.*HIGH/i        && do { print green("$line"); next; };
+		/yes$/              && do { print green("$line"); next; };
+		/no$/               && do { print brown("$line"); next; };
+		/no .*/             && do { print red(  "$line"); next; };
+		/\s+(?:C|D|WEAK)$/i && do { print red(  "$line"); next; };
+		/\s+(?:C|D|LOW)$/i  && do { print red(  "$line"); next; };
+		/\s+(?:B|MEDIUM)$/i && do { print brown("$line"); next; };
+		/\s+(?:A|HIGH)$/i   && do { print green("$line"); next; };
+		/\s+(?:-[?]-)$/i    && do { print cyan( "$line"); next; };
 		print "$line"; next;
 	}
 
 	if ($mode eq "word") {
-		/yes\s*(?:LOW|WEAK|MEDIUM|HIGH)$/i && do {
-			# match cipher line with risk
-			s/(LOW)$/    red(  $1);/ie;
-			s/(WEAK)$/   red(  $1);/ie;
-			s/(MEDIUM)$/ brown($1);/ie;
-			s/(HIGH)$/   green($1);/ie;
+		/(?:A|B|C|D|-[?]-|LOW|WEAK|MEDIUM|HIGH)$/i && do {
+			# match cipher line with risk (must be last word)
+			s/(\sC|D|WEAK)$/ red(  $1);/ie;
+			s/(\sC|D|LOW)$/  red(  $1);/ie;
+			s/(\sB|MEDIUM)$/ brown($1);/ie;
+			s/(\sA|HIGH)$/   green($1);/ie;
+			s/(\s-[?]-)$/    cyan ($1);/ie;
 			print "$_";
 			next;
 		};

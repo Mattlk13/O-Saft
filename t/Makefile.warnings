@@ -3,43 +3,17 @@
 #? NAME
 #?      Makefile        - makefile for testing O-Saft warning messages
 #?
-#? SYNOPSYS
-#?      make [options] [target] [...]
-#?
 #? DESCRIPTION
+#?      For more details please see
+#?          ../Makefile  Makefile  Makefile.help  Makefile.pod
+#?      make help.test.warnings
+#?
 #?      Makefile with targets for testing warnings of o-saft.pl .
 #?      All targets succedd, if the warning message is present, they fail, if
 #?      the warning message is not present.
 #?
-#? LIMITATIONS
-#?      Requires GNU Make > 2.0.
-#?
-# HACKER's INFO
-#       For details please see
-#           ../Makefile  Makefile  ../Makefile.help  Makefile.pod
-#
-#    How target rules in this Makefile (should) work:
-#       The pattern rule  message-%  from  ./Makefile  is used to check for a
-#       specific warning message. The pattern rule searches (grep) the output
-#       of o-saft.pl for a string, which is the pattern of the target name.
-#       Each target rule  defines its own arguments to be passed to o-saft.pl
-#
-#       Mainly the  +quit  command is sufficient to get the warning.
-#       The first target rule  warning-000  is designed to fail.
-#       All targets rules are summarized in the  test.warnings  rule.
-#
-#       To log the results of these tests, only one file will be created, not
-#       one for each target rule. That what  test.warnings.log  does.
-#
-#    Limitations
-#       The name of each individual target rule  contains the pattern (049 in
-#       above example ), which must be searched for in the output of EXE.pl .
-#       As this is just a simple number in all rules here, the search may re-
-#       sult in false positives.  Manual checks of the rule commands (recipe)
-#       are recommended from time to time.
-#
 #? VERSION
-#?      @(#)  1.55 19/11/21 00:03:30
+#?      @(#)  1.60 21/04/16 11:39:18
 #?
 #? AUTHOR
 #?      18-apr-18 Achim Hoffmann
@@ -48,7 +22,7 @@
 
 HELP-help.test.warnings = targets for testing '$(SRC.pl)' WARNING messages
 
-_SID.warnings      := 1.55
+_SID.warnings      := 1.60
 
 _MYSELF.warnings   := t/Makefile.warnings
 ALL.includes       += $(_MYSELF.warnings)
@@ -106,22 +80,53 @@ test.warnings%:     EXE.pl      = ../$(SRC.pl)
 warning-%:          EXE.pl      = ../$(SRC.pl)
 warning-%:          TEST.init   = 
 
-# Each warning-* target defines its (conditional) command to be used with
-# $(EXE.pl). If the definition starts with the literal string "TODO:" the
-# target will only print the text (see message-%).
-# The TODO texts ending with  "difficult ..." mark messages, which cannot
-# tested easily.  Those ending with  "disabled ..."  mark messages, which
-# are currently disabled (commented out) in the source code.
-# All other targets should define  TEST.args  with those arguments, which 
-# force the warning message DDD given in the target's name  warning-DDD .
-# Some messages can be tested without any target host, they use the +quit
-# command. Others need a target host argument somehow, "any-host" is used
-# for that. Using any-host most likely causes $(EXE.pl) to fail with more
-# WARNNG messages printed, but they are silently ignored because only the 
-# message with the specific number DDD is extracted.
-# NOTE: in rare cases the target may succedd wrongly,  see description of
-# message-%  pattern rule in t/Makefile.
+# How target rules in this Makefile (should) work:
+#   The pattern rule  message-%  from  ./Makefile  is used to check for a
+#   specific warning message.
+
+warning-%: message-%
+	@$(TRACE.target)
+
+#   The pattern rule  message-%  searches (grep) the output of  o-saft.pl
+#   for a string, which is the pattern of the target name.
+#   Each target rule  defines its own arguments to be passed to o-saft.pl
 #
+#   Mainly the  +quit  command is sufficient to get the warning.
+#   The first target rule  warning-000  is designed to fail.
+#   All targets rules are summarized in the target  test.warnings .
+#
+#   To log the results of these tests, only one file will be created, not
+#   one for each target rule. The target is  test.warnings.log .
+#
+#   All targets define  EXE.pl  which is the command to be used.
+#   All targets should define  TEST.args  with the arguments, which force
+#   the warning message DDD given in the target's name  warning-DDD .
+#   Some messages can be tested without any target host,  then the  +quit
+#   command is added to  TEST.args .  Others need a  target host argument
+#   somehow, "any-host"  is used for that. Using  "any-host"  most likely
+#   causes $(EXE.pl) to fail with more WARNNG messages printed,  but they
+#   are silently ignored because the message with the specific number DDD
+#   only is extracted.
+#   If the definition of TEST.args starts with the literal string "TODO:"
+#   the target will only print the text (see message-%).
+#   The "TODO:" texts ending with  "difficult ..."  mark messages,  which
+#   cannot be tested easily. They are currently disabled,  means that the
+#   "TODO" text is printed by the target.
+#
+# Examples
+#   warning-049: TEST.args  = +unknown_command              +quit
+#   warning-004: TEST.args  = TODO: testing perl status, difficult ...
+#
+# Limitations
+#   The name of each individual target rule  contains the pattern (049 in
+#   above example), which must be searched for in the output of  EXE.pl .
+#   As this is just a simple number in all rules here, the search may re-
+#   sult in false positives.  Manual checks of the rule commands (recipe)
+#   are recommended from time to time.
+#
+#   NOTE:  in rare cases the target may succedd wrongly,  see description
+#   of   message-%  pattern rule in t/Makefile.
+
 # TODO:  the message text assigned to  TEST.args  is mainly a copy of the
 #        the text used in the source code;  should find a way to generate
 #        these assignments (done manually here, which is error-prone)
@@ -149,12 +154,12 @@ warning-022: TEST.args  = --cfgcmd-is=unknown               +quit
 warning-023: TEST.args  = --legacy=key                      +quit
 #warning-040: TEST.args  = free
 warning-041: TEST.args  = s_client                          +quit
-warning-042: TEST.args  = +cn --port=' ' unknown-host       +quit
-warning-043: TEST.args  = --rc=$(TEST.tmp.rc) --v           +quit
-warning-043:                                     TEST.rc = --cfg_cmd=new_command=quit
+warning-042: TEST.args  = +cn /unknown-host                 +quit
+warning-043: TEST.args  = +cn --port=' ' unknown-host       +quit
 warning-044: TEST.args  = +zlib +lzo +open_pgp +fallback    +quit
 warning-045: TEST.args  = any-host --port 45                +quit
-#warning-046: TEST.args  = free
+warning-046: TEST.args  = --rc=$(TEST.tmp.rc) --v           +quit
+warning-046:                                     TEST.rc = --cfg_cmd=new_command=quit
 warning-047: TEST.args  = +info  +cn                        any-host
 warning-048: TEST.args  = +check +cn                        any-host
 warning-049: TEST.args  = +unknown_command                  +quit
@@ -166,7 +171,7 @@ warning-053: TEST.args  = --capath='/path with spaces'      +quit
 warning-054: TEST.args  = --legacy=unknown_legacy           +quit
 warning-055: TEST.args  = --format=unknown_format           +quit
 warning-056: TEST.args  = --range=unknown_range             +quit
-#warning-057: TEST.args  = free
+warning-057: TEST.args  = --cipher-mode=unknown             +quit
 warning-058: TEST.args  = --ca-path=unknown                 +quit
 warning-059: TEST.args  = --ca-path=unknown                 +quit
 warning-060: TEST.args  = --ca-paths=unknown --cfg-init=ca_files=unknown +quit
@@ -236,7 +241,7 @@ warning-149: TEST.args  = --openssl=/does/not/exist         +quit
 warning-201: TEST.args  = +cn                               unknown-host
 warning-202: TEST.args  = +cn --exit=HOST1                  www.skype.com
 #                       # scary: need a reliable FQDN here -^^^^^^^^^^^^^
-#warning-203: TEST.args  = free
+warning-203: TEST.args  = TODO: testing connection without SNI (errors), difficult ...
 warning-204: TEST.args  = TODO: testing connection without SNI, difficult ...
 warning-205: TEST.args  = TODO: testing connection failed, difficult ...
 warning-206: TEST.args  = TODO: testing connection witout SNI errors from Net::SSLinfo, difficult ...
@@ -261,8 +266,8 @@ warning-325: TEST.args  = TODO: testing connection failed, HTTP disabled, diffic
 warning-331: TEST.args  = TODO: testing _isccs: failed to connect, difficult ...
 warning-332: TEST.args  = TODO: testing _isccs: no reply, difficult ...
 warning-408: TEST.args  = --no-openssl  +cipher-dh --exit=HOST2 $(TEST.host)
-warning-409: TEST.args  = --sslv2 --sni +cipherall --exit=HOST4 $(TEST.host)
-warning-410: TEST.args  = --sslv2 --sni +cipher    --exit=HOST4 $(TEST.host)
+warning-409: TEST.args  = --sslv2 --sni +cipher    --exit=HOST4 $(TEST.host)
+warning-410: TEST.args  = --sslv2 --sni +cipher --ciphermode=openssl --exit=HOST4 $(TEST.host)
 warning-411: TEST.args  = TODO: testing checked cipher does not match returned cipher, difficult ...
 warning-412: TEST.args  = TODO: testing missing ciphers in sorted list, difficult ...
 warning-451: TEST.args  = TODO: testing function obsolete, please use cipher_openssl, difficult ...
@@ -304,9 +309,6 @@ warning-522: TEST.args  = TODO: testing duplicate openssl key, difficult ...
 warning-522: EXE.pl     = ../OSaft/Ciphers.pm
 
 ALL.test.warnings   = $(shell awk -F: '/^warning-...:/{arr[$$1]=1}$(_AWK_print_arr_END)' $(_MYSELF.warnings))
-
-warning-%: message-%
-	@$(TRACE.target)
 
 _TEST.template  = t/test.warning.Makefile-template
 $(_TEST.template): $(SRC.pl) $(SRC.pm)
@@ -382,7 +384,7 @@ warnings-%.log: $(TEST.logdir)
 # $(_TEST.warning.log) calls "make -s" to avoid printing of executed commands
 _TEST.warning.log   = $(TEST.logdir)/test.warnings.log-$(TEST.today)
 $(_TEST.warning.log):
-	@echo "#  1.55: $(MAKE) test.warnings.log" > $@
+	@echo "#  1.60: $(MAKE) test.warnings.log" > $@
 	@$(MAKE) -s $(ALL.test.warnings) >> $@ 2>&1
 
 # Target should create a new logfile, then compare it with the current one. If

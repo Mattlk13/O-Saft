@@ -21,14 +21,14 @@
 #       For the public available targets see below of  "well known targets" .
 #?
 #? VERSION
-#?      @(#) Makefile 1.100 19/12/04 23:44:55
+#?      @(#) Makefile 1.110 21/04/30 01:00:15
 #?
 #? AUTHOR
 #?      21-dec-12 Achim Hoffmann
 #?
 # -----------------------------------------------------------------------------
 
-_SID            = 1.100
+_SID            = 1.110
                 # define our own SID as variable, if needed ...
                 # SEE O-Saft:Makefile Version String
                 # Known variables herein (8/2019) to be changed are:
@@ -123,7 +123,12 @@ CONTRIB.post.awk= \
 		  JSON-array.awk JSON-struct.awk \
 		  XML-attribute.awk XML-value.awk \
 		  lazy_checks.awk
-CONTRIB.post    = bunt.pl bunt.sh symbol.pl
+CONTRIB.post    = \
+		  alertscript.pl \
+		  alertscript.cfg \
+		  bunt.pl \
+		  bunt.sh \
+		  symbol.pl
 CONTRIB.misc    = \
 		  cipher_check.sh \
 		  critic.sh \
@@ -201,6 +206,11 @@ GEN.rel         = $(Project).rel
 GEN.tgz         = $(Project).tgz
 GEN.tmptgz      = $(TMP.dir)/$(GEN.tgz)
 
+# generated files for $(SRC.tcl) internal use
+_TCL.data       = +help --help=opt --help=commands --help=glossar \
+		  --help=alias --help=data --help=checks --help=regex --help=rfc
+GEN.TCL.data = $(_TCL.data:%=$(DOC.dir)/$(SRC.pl).%)
+
 # summary variables
 GEN.docs        = $(GEN.pod) $(GEN.html) $(GEN.cgi.html) $(GEN.text) $(GEN.wiki) $(GEN.man)
 SRC.exe         = $(SRC.pl)  $(SRC.gui) $(CHK.pl)  $(DEV.pl) $(SRC.sh)
@@ -208,8 +218,8 @@ inc.Makefiles   = \
 		  Makefile         Makefile.inc   Makefile.help  Makefile.pod \
 		  Makefile.opt     Makefile.cmd   Makefile.ext   Makefile.exit \
 		  Makefile.cgi     Makefile.tcl   Makefile.misc  Makefile.warnings \
-		  Makefile.critic  Makefile.etc   Makefile.template \
-		  Makefile.dev     Makefile.FQDN  Makefile.examples
+		  Makefile.critic  Makefile.dev   Makefile.etc   Makefile.template \
+		  Makefile.docker  Makefile.FQDN  Makefile.examples
 # NOTE: sequence in ALL.Makefiles is important, for example when used in target doc
 ALL.Makefiles   = $(SRC.make) $(inc.Makefiles:%=$(TEST.dir)/%)
 ALL.osaft       = $(SRC.pl)  $(SRC.gui) $(CHK.pl)  $(SRC.pm)  $(SRC.sh) $(SRC.txt) $(SRC.rc) $(SRC.docker)
@@ -218,7 +228,7 @@ ALL.tst         = $(SRC.test)
 ALL.contrib     = $(SRC.contrib)
 ALL.doc         = $(SRC.doc) $(SRC.web)
 ALL.pm          = $(SRC.pm)
-ALL.gen         = $(GEN.src) $(GEN.pod) $(GEN.html) $(GEN.cgi.html) $(GEN.text) $(GEN.man) $(GEN.inst)
+ALL.gen         = $(GEN.src) $(GEN.pod) $(GEN.html) $(GEN.cgi.html) $(GEN.text) $(GEN.man) $(GEN.inst) $(GEN.TCL.data)
 ALL.docs        = $(SRC.doc) $(GEN.docs)
     # NOTE: ALL.docs is are the files for user documentation, ALL.doc are SRC-files
 #               # $(GEN.tags) added in t/Makefile.misc
@@ -248,21 +258,40 @@ EXE.docker      = o-saft-docker
 EXE.pl          = $(SRC.pl)
 #                   SRC.pl is used for generating a couple of data
 
+# summary variables (mainly used for INSTALL.sh)
+_ALL.devtools.intern  += $(EXE.single)
+_ALL.devtools.extern  += sccs gpg sha256sum docker
+ALL.tools.optional     = aha perldoc pod2html pod2man pod2text pod2usage podman podviewer tkpod stty tput
+ALL.devtools    = $(_ALL.devtools.intern)   $(_ALL.devtools.extern)
+ALL.devmodules  = $(_ALL.devmodules.intern) $(_ALL.devmodules.extern)
+
 # INSTALL.sh must not contain duplicate files, hence the variable's content
 # is sorted using make's built-in sort which removes duplicates
 _INST.osaft_cgi = $(sort $(SRC.cgi) $(SRC.php) $(GEN.cgi.html))
 _INST.osaft_doc = $(sort $(GEN.pod) $(GEN.man) $(GEN.html))
 _INST.contrib   = $(sort $(ALL.contrib))
 _INST.osaft     = $(sort $(ALL.osaft))
-_INST.text      = generated from Makefile 1.100
-EXE.install     = sed   -e 's@INSTALLDIR_INSERTED_BY_MAKE@$(INSTALL.dir)@'    \
-			-e 's@CONTRIBDIR_INSERTED_BY_MAKE@$(CONTRIB.dir)@'    \
-			-e 's@CONTRIB_INSERTED_BY_MAKE@$(_INST.contrib)@'     \
-			-e 's@OSAFT_INSERTED_BY_MAKE@$(_INST.osaft)@'         \
-			-e 's@OSAFT_PL_INSERTED_BY_MAKE@$(SRC.pl)@'           \
-			-e 's@OSAFT_GUI_INSERTED_BY_MAKE@$(SRC.tcl)@'         \
-			-e 's@OSAFT_CGI_INSERTED_BY_MAKE@$(_INST.osaft_cgi)@' \
-			-e 's@OSAFT_DOC_INSERTED_BY_MAKE@$(_INST.osaft_doc)@' \
+_INST.devtools  = $(sort $(ALL.devtools))
+_INST.tools_int = $(sort $(_ALL.devtools.intern))
+_INST.tools_ext = $(sort $(_ALL.devtools.extern))
+_INST.tools_opt = $(sort $(ALL.tools.optional))
+_INST.tools_other = $(sort $(ALL.tools.ssl))
+_INST.devmodules= $(sort $(ALL.devmodules))
+_INST.text      = generated from Makefile 1.110
+EXE.install     = sed   -e 's@INSERTED_BY_MAKE_INSTALLDIR@$(INSTALL.dir)@'    \
+			-e 's@INSERTED_BY_MAKE_CONTRIBDIR@$(CONTRIB.dir)@'    \
+			-e 's@INSERTED_BY_MAKE_CONTRIB@$(_INST.contrib)@'     \
+			-e 's@INSERTED_BY_MAKE_TOOLS_OTHER@$(_INST.tools_other)@' \
+			-e 's@INSERTED_BY_MAKE_TOOLS_OPT@$(_INST.tools_opt)@' \
+			-e 's@INSERTED_BY_MAKE_DEVTOOLSINT@$(_INST.tools_int)@' \
+			-e 's@INSERTED_BY_MAKE_DEVTOOLSEXT@$(_INST.tools_ext)@' \
+			-e 's@INSERTED_BY_MAKE_DEVMODULES@$(_INST.devmodules)@' \
+			-e 's@INSERTED_BY_MAKE_OSAFT_SH@$(SRC.sh)@'           \
+			-e 's@INSERTED_BY_MAKE_OSAFT_PL@$(SRC.pl)@'           \
+			-e 's@INSERTED_BY_MAKE_OSAFT_GUI@$(SRC.tcl)@'         \
+			-e 's@INSERTED_BY_MAKE_OSAFT_CGI@$(_INST.osaft_cgi)@' \
+			-e 's@INSERTED_BY_MAKE_OSAFT_DOC@$(_INST.osaft_doc)@' \
+			-e 's@INSERTED_BY_MAKE_OSAFT@$(_INST.osaft)@'         \
 			-e 's@INSERTED_BY_MAKE@$(_INST.text)@'
                 # last substitude is fallback to ensure everything is changed
 
@@ -442,8 +471,10 @@ HELP-pod        = generate POD format help '$(GEN.pod)'
 HELP-html       = generate HTML format help '$(GEN.html)'
 HELP-text       = generate plain text  help '$(GEN.text)'
 HELP-wiki       = generate mediawiki format help '$(GEN.wiki)'
+HELP-docs       = generate '$(GEN.docs)'
 HELP-tar        = generate '$(GEN.tgz)' from all source prefixed with O-Saft/
 HELP-tmptar     = generate '$(GEN.tmptgz)' from all sources without prefix
+HELP-tcl.data   = generate '$(GEN.TCL.data)' for $(SRC.tcl)
 HELP-gen.all    = generate most "generatable" file
 HELP-docker     = generate local docker image (release version) and add updated files
 HELP-docker.dev = generate local docker image (development version)
@@ -474,10 +505,11 @@ pod:    $(GEN.pod)
 html:   $(GEN.html)
 text:   $(GEN.text)
 wiki:   $(GEN.wiki)
+docs:   $(GEN.docs)
 standalone: $(GEN.src)
 tar:    $(GEN.tgz)
-GREP_EDIT           = 1.100
-tar:     GREP_EDIT  = 1.100
+GREP_EDIT           = 1.110
+tar:     GREP_EDIT  = 1.110
 tmptar:  GREP_EDIT  = something which hopefully does not exist in the file
 tmptar: $(GEN.tmptgz)
 tmptgz: $(GEN.tmptgz)
@@ -492,6 +524,8 @@ clear.all:  clean.tar clean
 clean.all:  clean.tar clean
 tgz:        tar
 gen.all:    $(ALL.gen)
+tcl.data:   $(GEN.TCL.data)
+tcldata:    $(GEN.TCL.data)
 
 # docker target uses project's own script to build and remove the image
 docker.build:
@@ -595,6 +629,9 @@ $(GEN.tgz)--to-noisy: $(ALL.src)
 	@grep -q '$(GREP_EDIT)' $? \
 	    && echo "file(s) being edited or with invalid SID" \
 	    || echo tar zcf $@ $^
+
+$(DOC.dir)/$(SRC.pl).%: $(SRC.pl)
+	$(SRC.pl) --no-rc $* > $@
 
 # Special target to check for edited files;  it only checks the source files of
 # the tool (o-saft.pl) but no other source files.

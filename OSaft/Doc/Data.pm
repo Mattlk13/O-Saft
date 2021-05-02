@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## PACKAGE {
 
-#!# Copyright (c) 2019, Achim Hoffmann, sic[!]sec GmbH
+#!# Copyright (c) 2021, Achim Hoffmann
 #!# This software is licensed under GPLv2.  Please see o-saft.pl for details.
 
 ## no critic qw(Documentation::RequirePodSections)
@@ -24,18 +24,24 @@ package OSaft::Doc::Data;
 use strict;
 use warnings;
 
-our $VERSION    = "19.11.19";  # official verion number of tis file
-my  $SID_data   = "@(#) Data.pm 1.25 19/11/13 13:50:13";
+BEGIN { # mainly required for testing ...
+    # SEE Perl:BEGIN perlcritic
+    my $_path = $0;     $_path =~ s#[/\\][^/\\]*$##;
+    unshift(@INC, ".",  $_path);
+}
+
+our $VERSION    = "21.01.12";  # official verion number of tis file
+my  $SID_data   = "@(#) Data.pm 1.41 21/01/14 00:18:58";
 
 # binmode(...); # inherited from parent, SEE Perl:binmode()
 
-# TODO: use osaft; # needs proper path
-my $STR_WARN    = "**WARNING: ";
+use osaft qw(print_pod STR_WARN);
+
 sub _warn   {
     my @txt = @_;
     return if (grep{/(?:--no.?warn)/} @ARGV);   # ugly hack
     local $\ = "\n";
-    print($STR_WARN, join(" ", @txt));
+    print(STR_WARN, join(" ", @txt));
     # TODO: in CGI mode warning must be avoided until HTTP header written
     return;
 }; # _warn
@@ -57,9 +63,9 @@ OSaft::Doc::Data - common Perl module to read data for user documentation
 
 =item  use OSaft::Doc::Data;        # from within perl code
 
-=item OSaft::Doc::Data --usage      # on command line will print short usage
+=item OSaft/Doc/Data --usage        # on command line will print short usage
 
-=item OSaft::Doc::Data [COMMANDS]   # on command line will print help
+=item OSaft/Doc/Data [COMMANDS]     # on command line will print help
 
 =back
 
@@ -71,7 +77,7 @@ OSaft::Doc::Data - common Perl module to read data for user documentation
 #_____________________________________________________________________________
 #_________________________________________________________ internal methods __|
 
-sub _replace_var {
+sub _replace_var    {
     #? replace $0 by name and $VERSION by version in array, return array
     my ($name, $version, @arr) = @_;
     # SEE Perl:map()
@@ -79,6 +85,18 @@ sub _replace_var {
     s#(?<!`)\$0#$name#g     for @arr;   # my name
     return @arr;
 } # _replace_var
+
+sub _get_standalone {
+    #? return help.txt with path in standalone mode
+    # o-saft-standalone.pl may be in installtion path or in contrib/ directory
+    # hence various places for help.txt are checked
+    my $file = shift;
+    $file =~ s#^\.\./##;
+    $file =~ s#contrib/##;              # remove if in path
+    $file =  "OSaft/Doc/$file";         # try this one ..
+    $file =  "../$file" if (not -e $file);  # .. or this one
+    return $file;
+} # _get_standalone
 
 sub _get_filehandle {
     #? return open file handle for passed filename,
@@ -92,7 +110,7 @@ sub _get_filehandle {
         # file may be in same directory as caller, or in same as this module
         if (not -e $file) {
             my  $path = __FILE__;
-                $path =~ s#^/(OSaft/.*)#$1#;# own module drectory
+                $path =~ s#^/(OSaft/.*)#$1#;# own module directory
                 $path =~ s#/[^/\\]*$##;     # relative path of this file
                 # Dirty hack: some OS return an absolute path for  __FILE__ ;
                 # then $file would not be found because that path is wrong. If
@@ -100,9 +118,8 @@ sub _get_filehandle {
                 # NOTE: This behaviour (on older Mac OSX) is considered a bug
                 #       in Perl there.
             $file = "$path/$file";
-            # following two line are for gen_standalone.sh (used with make)
-            # OSAFT_STANDALONE $file =~ s#^\.\./##; # remove leading ../
-            # OSAFT_STANDALONE $file =  "../OSaft/Doc/$file"; # use this one
+            # following line for gen_standalone.sh (used with make)
+            # OSAFT_STANDALONE $file =  _get_standalone($file);
         }
     }
     #dbx# print "#Data.pm file=$file ";
@@ -116,7 +133,7 @@ sub _get_filehandle {
         $fh = __PACKAGE__ . "::DATA";   # same as:  *OSaft::Doc::Data::DATA
         _warn("191: no '$file' found, using '$fh'") if not -e $file;
     }
-    #dbx# print "file: $file , FH: *$fh";
+    #dbx# print "#Data.pm file=$file , FH=*$fh";
     return $fh;
 } # _get_filehandle
 
@@ -132,6 +149,34 @@ sub get_egg     {
     close($fh);
     return scalar reverse "\n$egg";
 } # get_egg
+
+=pod
+
+=head2 get($file,$name,$version)
+
+Return all data from file and replace $0 by $name. Returns data as string.
+
+=cut
+
+sub get         {
+    my $file    = shift;
+    my $name    = shift || "o-saft.pl";
+    my $version = shift || $VERSION;
+    my $fh      = _get_filehandle($file);
+    return _replace_var($name, $version, <$fh>);
+    # TODO: misses  close($fh);
+} # get
+
+=pod
+
+=head2 get_as_text($file)
+
+Return all data from file as is. Returns data as string.
+
+=cut
+
+sub get_as_text { my $fh = _get_filehandle(shift); return <$fh>; }
+# TODO: misses  close($fh);
 
 =pod
 
@@ -171,13 +216,22 @@ sub get_markup    {
         s/^( {11})([^ ].*)/=item * $1$2/;# list item
         s/^( {14})([^ ].*)/S&$1$2&/;    # exactly 14 spaces used to highlight line
         s/^( {18})([^ ].*)/S&$1$2&/;    # exactly 18
-        if (not m/^(?:=|S&|\s+\$0)/) {  # more markup, ...
+        # quick&dirty: should not match lines starting with any of:
+        #     $0 o-saft o-saft.tcl o-saft-docker checkAllCiphers.pl perl perlapp perl2exe
+        # quick&dirty: should also not match  X& ... & as no other potential
+        # markup should be substituted in there
+        if (not m/^(?:=|S&|\s+(?:\$0|o-saft|o-saft.tcl|o-saft-docker|checkAllCiphers.pl|perl|perl2exe|perlapp)\s)/
+            and not m/X&[^&]*(?:\+|--)/
+           ) {  # more markup, ...
             # but not in example lines and already marked lines
             s#(\s)+(a-zA-Z[^ ]+)(\s+)#$1'$2'$3#g;   # markup literal character class as code
             s#(\s)((?:\+|--)[^,\s).]+)([,\s).])#$1I&$2&$3#g; # our commands and options
                 # TODO: fails for something like:  --opt=foo="bar"
                 # TODO: above substitute fails for something like:  --opt --opt
                 #        hence same substitute again (should be sufficent then)
+            s#([A-Z]L)&#$1 &#g; # i.e. SSL
+                # quick&dirty to avoid further inerpretation of L&
+                # ugly hack as it adds a space
             s#(\s)((?:\+|--)[^,\s).]+)([,\s).])#$1I&$2&$3#g;
         }
         if (not m/^S/ and not m/^ {14,}/) {
@@ -196,13 +250,19 @@ sub get_markup    {
             # we only want to catch header lines, hence all capital letters
             s/ ((?:DEBUG|RC|USER)-FILE)/ X&$1&/g;
             s/ (CONFIGURATION (?:FILE|OPTIONS))/ X&$1&/g;
+            s/ (SHELL TWEAKS)/ X&$1&/g;
+            s/ (SEE ALSO)/ X&$1&/g;
+            s/ (EXIT STATUS)/ X&$1&/g;
             s/ (CIPHER NAMES)/ X&$1&/g;
             s/ (LAZY SYNOPSIS)/ X&$1&/g;
             s/ (KNOWN PROBLEMS)/ X&$1&/g;
             s/ (BUILD DOCKER IMAGE)/ X&$1&/g;
-            s/ (RESULTS|COMMANDS|OPTIONS|CHECKS|OUTPUT|CUSTOMIZATION) / X&$1& /g;
+            s/ (BUILD DOCKER IMAGE)/ X&$1&/g;
+            s/ (TECHNICAL INFORMATION)/ X&$1&/g;
+            s/ (NAME|CONCEPTS|ENVIRONMENT)/ X&$1&/g;
+            s/ (COMMANDS|OPTIONS|RESULTS|CHECKS|OUTPUT|CUSTOMISATION) / X&$1& /g;
             s/ (LIMITATIONS|DEPENDENCIES|INSTALLATION|DOCKER|TESTING) / X&$1& /g;
-            s/ (CUSTOMIZATION|SCORING|EXAMPLES|ATTRIBUTION|VERSION) / X&$1& /g;
+            s/ (SCORING|EXAMPLES|ATTRIBUTION|DOCUMENTATION|VERSION) / X&$1& /g;
             s/ (DESCRIPTION|SYNOPSIS|QUICKSTART|SECURITY|DEBUG|AUTHOR) / X&$1& /g;
         }
         push(@txt, $_);
@@ -211,19 +271,18 @@ sub get_markup    {
     return _replace_var($parent, $version, @txt);
 } # get_markup
 
-=pod
-
-=head2 get_text($file)
-
-Same as  get()  but with some variables substituted.
-
-=cut
+# NOTE: NOT YET READY, not yet used (hence no POD also)
+#=pod
+#
+#=head2 get_text($file)
+#
+#Same as  get()  but with some variables substituted.
+#
+#=cut
 
 sub get_text    {
-    #? print program's help
-# NOTE: NOT YET READY, not yet used
     my $file    = shift;
-    my $label   = shift || "";  # || to avoid uninitialized value
+    my $label   = shift || "";  # || to avoid "Use of uninitialised value"
        $label   = lc($label);
     my $anf     = uc($label);
     my $end     = "[A-Z]";
@@ -269,34 +328,6 @@ sub get_text    {
 
 =pod
 
-=head2 get_as_text($file)
-
-Return all data from file as is. Returns data as string.
-
-=cut
-
-sub get_as_text { my $fh = _get_filehandle(shift); return <$fh>; }
-# TODO: misses  close($fh);
-
-=pod
-
-=head2 get($file,$name,$version)
-
-Return all data from file and replace $0 by $name. Returns data as string.
-
-=cut
-
-sub get         {
-    my $file    = shift;
-    my $name    = shift || "o-saft.pl";
-    my $version = shift || $VERSION;
-    my $fh      = _get_filehandle($file);
-    return _replace_var($name, $version, <$fh>);
-    # TODO: misses  close($fh);
-} # get
-
-=pod
-
 =head2 print_as_text($file)
 
 Same as  get()  but prints text directly.
@@ -312,9 +343,9 @@ sub print_as_text { my $fh = _get_filehandle(shift); print  <$fh>; return; }
 
 If called from command line, like
 
-  OSaft/Doc/Data.pm [COMMANDS] file
+  OSaft/Doc/Data.pm COMMANDS [file]
 
-this modules provides following commands:
+this modules provides following COMMANDS:
 
 =head2 VERSION
 
@@ -326,21 +357,22 @@ Print internal version.
 
 =head2 list
 
-Print list of *.txt files in current directory.
+Print list of *.txt files in current directory. These files may be used for
+following commands.
 
 =head2 get filename
 
 Call get(filename).
-
-=head2 get_text filename
-
-Call get_text(filename).
 
 =head2 get_as_text filename
 
 Call get_as_text(filename).
 
 =head2 get_markup filename
+
+Call get_markup(filename).
+
+=head2 get_text filename
 
 Call get_text(filename).
 
@@ -361,7 +393,7 @@ Print VERSION version.
 =cut
 
 sub list        {
-    #? print sorted list of available .txt files
+    #? return sorted list of available .txt files
     #  sorted list simplifies tests ...
     my $dir = $0;
        $dir =~ s#[/\\][^/\\]*$##;
@@ -392,40 +424,26 @@ sub _main_usage {
     return;
 }; # _main_usage
 
-sub _main_help  {
-    #? print own help
-    printf("# %s %s\n", __PACKAGE__, $VERSION);
-    if (eval {require POD::Perldoc;}) {
-        # pod2usage( -verbose => 1 );
-        exec( Pod::Perldoc->run(args=>[$0]) );
-    }
-    if (qx(perldoc -V)) {   ## no critic qw(InputOutput::ProhibitBacktickOperators)
-        printf("# no POD::Perldoc installed, please try:\n  perldoc $0\n");
-    }
-    exit 0;
-}; # _main_help
-
 sub _main       {
     #? print own documentation or that from specified file
     ## no critic qw(InputOutput::RequireEncodingWithUTF8Layer)
-    #  see t/.perlcritic for detailed description of "no critic"
+    #  see t/.perlcriticrc for detailed description of "no critic"
     my @argv = @_;
+    #  SEE Perl:binmode()
     binmode(STDOUT, ":unix:utf8");
     binmode(STDERR, ":unix:utf8");
-
-    if (0 > $#argv) { _main_help(); exit 0; }
-
+    print_pod($0, __PACKAGE__, $SID_data)       if (0 > $#argv);
     # got arguments, do something special
     while (my $cmd = shift @argv) {
         my $arg    = shift @argv; # get 2nd argument, which is filename
-        _main_help()            if ($cmd =~ /^--?h(?:elp)?$/);
+        print_pod($0, __PACKAGE__, $SID_data)   if ($cmd =~ /^--?h(?:elp)?$/);
         _main_usage()           if ($cmd =~ /^--usage$/);
         # ----------------------------- commands
-        print list()            if ($cmd =~ /^list$/);
+        print list() . "\n"     if ($cmd =~ /^list$/);
         print get($arg)         if ($cmd =~ /^get$/);
+        print get_as_text($arg) if ($cmd =~ /^get.?as.?text/);
         print get_markup($arg)  if ($cmd =~ /^get.?mark(up)?/);
         print get_text($arg)    if ($cmd =~ /^get.?text/);
-        print get_as_text($arg) if ($cmd =~ /^get.?as.?text/);
         print_as_text($arg)     if ($cmd =~ /^print$/);
         print "$SID_data\n"     if ($cmd =~ /^version$/);
         print "$VERSION\n"      if ($cmd =~ /^[-+]?V(ERSION)?$/);
@@ -468,8 +486,8 @@ It is difficult to markup character classes like  a-zA-Z-  this way (using
 quotes), because any character may be part of the class, including quotes or
 those used for markup. For Example will  a-zA-Z-  look like  C<a-zA-Z->  in
 POD format. Hence character classes are defined literally without markup to
-avoid confusion. However, it is assumed (when our generating documentation)
-that strings (words) beginning with <a-zA-Z  are character classes.
+avoid confusion.  However, when generating documentation it is assumed that
+strings (words) beginning with  a-zA-Z  are character classes.
 
 =item '* list item
 
@@ -497,8 +515,8 @@ Will not be replaced, but kept as is.
 
 =back
 
-Referenzes to titles are written in all upper case characters and prefixed
-and suffixed with 2 spaces.
+Referenses to titles are written in all upper case characters and prefixed
+and suffixed with 2 spaces or a . (dot) or , (comma).
 
 There is only one special markup used:
 
@@ -536,9 +554,7 @@ usually not treated as comment line but verbatim text.
 
 =item exactly 11  - list item
 
-=item exactly 14  - highlighted line
-
-=item exactly 18  - code line
+=item exactly 14  - code line
 
 =back
 
@@ -580,7 +596,7 @@ with these prefixes, all following commands and options are ignored.
 
 =head1 VERSION
 
-1.25 2019/11/13
+1.41 2021/01/14
 
 =head1 AUTHOR
 
@@ -600,6 +616,8 @@ _main(@ARGV) if (not defined caller);
 # SEE Note:Documentation
 # All public (user) documentation is in plain ASCII format (see help.txt).
 
+__END__
+
 =pod
 
 =head1 Annotations, Internal Notes
@@ -607,7 +625,31 @@ _main(@ARGV) if (not defined caller);
 The annotations here are for internal documentation only.
 For details about our annotations, please SEE  Annotations,  in o-saft.pl.
 
+
+=head3 Documentation:General
+
+All public user documentation is written in plain text format. Therfore it
+can be read without a special tool. It's designed for human radability and
+simple editing.
+
+All other formats like HTML, POD, troff (man-page), etc. will be generated
+from this plain text with the methods (functions) herein.
+The general workflow is as follows:
+
+=over
+
+=item 1. read text file
+
+=item 2. inject simple, intermediate markup (i.g. dokuwiki style markup)
+
+=item 3. convert intermediate markup to required format
+
+=back
+
+For generating some formats, external tools are used.  Such a tools mainly
+gets the data in POD format and then converts it to another format. 
+The external tools are called using Perl's 'exec()' function, usually.
+
 =cut
 
 __DATA__
-

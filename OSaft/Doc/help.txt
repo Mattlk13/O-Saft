@@ -1,5 +1,5 @@
 
-# SID   @(#) help.txt 1.45 19/11/25 23:28:10
+# SID   @(#) help.txt 1.79 21/02/28 19:45:03
 
 NAME
 
@@ -7,21 +7,12 @@ NAME
                  OWASP SSL audit for testers
 
 
-DESCRIPTION
-
-        This tools lists  information  about remote target's  SSL certificate
-        and tests the remote target according given list of ciphers.
-
-        Note:  Throughout this description  `$0'  is used as an alias for the
-        program name  'o-saft.pl'.
-
-
 SYNOPSIS
 
         $0 [COMMANDS ..] [OPTIONS ..] target [target target ...]
 
         where  [COMMANDS]  and  [OPTIONS]  are described below  and target is
-        a hostname either as full qualified domain name or as IP address.
+        a hostname either as full qualified domain name or an IP address.
         Multiple commands and targets may be combined.
 
         All  commands  and  options  can also be specified in a  rc-file, see
@@ -29,6 +20,15 @@ SYNOPSIS
 
         I.g. all commands start with a  '+'  character and options start with
         '-'  or  '--'  characters. Anything else is treated as target name.
+
+
+DESCRIPTION
+
+        This tool lists  information  about remote target's  SSL certificate,
+        and tests the remote target according given list of ciphers.
+
+        Note:  Throughout this description  `$0'  is used as an alias for the
+        program name  'o-saft.pl'.
 
 
 QUICKSTART
@@ -41,9 +41,6 @@ QUICKSTART
 
         * Show supported (enabled) ciphers with their DH parameters:
           $0 +cipher-dh example.tld
-
-        * Test all ciphers, even if not supported by local SSL implementation:
-          $0 +cipherall example.tld
 
         * Show details of certificate and connection of target:
           $0 +info example.tld
@@ -78,7 +75,7 @@ QUICKSTART
           $0 --help=HELP
 
         * Search for text in O-Saft's help and show with context
-          o-saft -help=your-text
+          o-saft --help=your-text
 
         * Start the simple GUI
           o-saft.tcl 
@@ -137,9 +134,10 @@ SECURITY
         Care should be taken, when additional tools and modules are installed
         as described in  INSTALLATION  below. In particular it is recommended
         to do these installations into directoies  specially prepared for use
-        with  $0 . No other tools of your system should use these
-        installations, i.e. by accident or because your environment variables
-        point to them.
+        with  $0 .
+        No other tools of your system  should use  these additional installed
+        tools, for example by accident or because environment variables point
+        to them.
 
         Note that compilation and installation of  additional tools (openssl,
         Net::SSLeay, etc.) uses known insecure configurations and features!
@@ -148,7 +146,7 @@ SECURITY
         It is  highly recommended to do these installations and use the tools
         on a separate testing system.
 
-        DO NOT USE THESE INSTALLATIONS ON PRODUCTIVE SYTEMS.
+        DO NOT USE THESE INSTALLATIONS ON PRODUCTIVE SYSTEMS.
 
 
 CONCEPTS
@@ -158,18 +156,27 @@ CONCEPTS
         However, the user "should do something" if necessary depending on the
         reported results.
 
+    This help text
+
+        The sequence of the sections in the help text doesn't strictly follow
+        the common guidlines for UNIX-style man pages.  This is because it is
+        important to understand the concepts of the tool and what options and
+        commands are in context of the tool. In particular the  DESCRIPTION  
+        section contains only a very brief description. The  OPTIONS  section
+        follows the  COMMANDS  section.
+
     Results
 
         Results of checks are marked  'yes'  or 'no'.  This leaves the proper
         interpretation, if the result is "good" or "bad", to the user.
         Background:  it is not always possible to rate a result as  "good" or
         "bad" or "insecure" or whatever. That's why  O-Saft  can not give the
-        "the best" or a "proper" recomendation. In practice it depends on the
-        context what a recomendation, or countermeasure should be. That's why
-        all results are marked  'yes'  or  'no'  if considered "questionable"
+        "the best" or a "proper"  recommendation.  In practice it  depends on
+        the context what a recommendation or countermeasure should be. That's
+        why results are marked  'yes'  or  'no'  if considered "questionable"
         or "not good" (for example according other checks).
 
-        ... more comming soon ...
+        For more details please see  RESULTS  below.
 
 
 TECHNICAL INFORMATION
@@ -182,11 +189,30 @@ TECHNICAL INFORMATION
 
         Starting with version 19.11.19 the  +cipher  command does not use any
         external library. Checking for ciphers is done using plain Perl code.
-        Only collected other SSL/TLS related inofrmation requires an external
+        Only other collected SSL/TLS related information requires an external
         library, in general libssl.
-        The description about OpenSSL and libssl below  applys to the command
-        +cipher-openssl only.
-        The changed commands and options will be described soon ...
+        The description about OpenSSL and libssl below applies only if any of
+        the options  --ciphermode=openssl  or  --ciphermode=ssleay  are given
+        with the  +cipher  command.
+
+        Therefore following commands and options changed:
+          * +cipher     uses internal method
+          * +cipherall  command obsolete, !!Hint is printed
+          * +cipherraw  command obsolete, !!Hint is printed
+          * --openssl-ciphers  --force-openssl  changed to  --ciphermode=openssl
+          * --openssl=TOOL  TOOL only used for  +cipher  --ciphermode=openssl
+          * --legacy=owasp  option obsolete
+
+        The commands  +cipherall  and  +cipherraw  are "converted" to the new
+        syntax, as follows:
+
+              VERSION < 19.11.19           VERSION > 19.11.19
+             #----------------------------+---------------------------------
+              * +cipher                      +cipher  --ciphermode=ssleay
+              * +cipher  --force-openssl     +cipher  --ciphermode=openssl
+              * +cipherall                   +cipher
+              * +cipherraw                   +cipher  --ciphermode=intern
+             #----------------------------+---------------------------------
 
     Version before 19.11.19
 
@@ -199,8 +225,8 @@ TECHNICAL INFORMATION
         In general the tool uses Perl's  Net::SSLeay(3pm) module which itself
         is based on libssl and/or libssleay library of the operating system.
         It's possible to use other versions of these libraries, see options:
-          * --exe-path=PATH --exe=PATH
-          * --lib-path=PATH --lib=PATH
+          * --exe-path=PATH  --exe=PATH
+          * --lib-path=PATH  --lib=PATH
           * --envlibvar=NAME
 
         The external  openssl(1)  is called to extract  some information from
@@ -208,17 +234,17 @@ TECHNICAL INFORMATION
         options:
           * --openssl=TOOL
           * --no-openssl
-          * --openssl-ciphers  --force-openssl
-          * --exe-path=PATH --exe=PATH
+          * --openssl-ciphers   --force-openssl
+          * --exe-path=PATH     --exe=PATH
           * --openssl-cnf=PATH
-          * --openssl-s_client --s_client
+          * --openssl-s_client  --s_client
 
         OpenSSL is recommended to be used for libssl and libcrypto.  Versions
         0.9.8k to 1.0.2e (Jan. 2016) are known to work. However, versions be-
-        for 1.0.0 may not provide all informations.
+        for 1.0.0 may not provide all information.
         Some functionality (checks) of  O-Saft  may be missing or fail,  when
         openssl versions 1.1.x are used (because functionality was removed).
-        LibreSSL is not recommended, because  some functionallity  considered
+        LibreSSL  is not recommended, because  some functionality  considered
         insecure, has been removed.
         For more details, please see  INSTALLATION  below.
 
@@ -245,21 +271,9 @@ TECHNICAL INFORMATION
 
     Environment variables
 
-        Following environment variables are incorporated:
-          * LD_LIBRARY_PATH - used and extended with definitions from options
-          * OPENSSL         - if set, full path to openssl executable
-          * OPENSSL_CONF    - if set, full path to openssl's openssl.cnf or
-                              directory where to find openssl.cnf
-#         * OPENSSL_FIPS    -
-#         * OPENSSL_ENGINES -
-#         * OPENSSL_ALLOW_PROXY
-#         * OPENSSL_ALLOW_PROXY_CERTS
-
+        Please see  ENVIRONMENT  .
 
     Requirements
-
-        For checking all ciphers and all protocols with  +cipherall  command,
-        just perl (5.x) without any modules is required.
 
         For  +info  and  +check  (and all related) commands,  perl (5.x) with
         following modules (minimal version) is recommended:
@@ -272,90 +286,37 @@ TECHNICAL INFORMATION
 
         However, it is recommended to use the most recent version of the mod-
         ules which then gives more accurate results and less warnings. If the
-        modules are missing, they can be installed i.e. with:
+        modules are missing, they can be installed for example with:
 
               cpan Net::SSLeay
 
         Note: if you want to use advanced features of openssl or Net::SSLeay,
         please see  INSTALLATION section how to compile and install the tools
-        fully customized.
+        fully customised. Requirements for  openssl  are described there.
 
         Also an openssl executable should be available, but is not mandatory.
 
         For checking DH parameters of ciphers, openssl 1.0.2  or newer should
         be available. If an older version of openssl is found, we try hard to
-        extract  the DH parameters from the  data returned by the server, see
+        extract the  DH parameters  from the data returned by the server, see
         +cipher-dh  command.
 
         If you need to run on systems with older perl or Perl module versions
-        please refer to the  DEBUG  section for more inofrmation.
+        please refer to the  DEBUG  section for more information.
 
+    External tools
 
-RESULTS
+        For building and/or viewing the documentation, any of following tools
+        should be available:
 
-        All output is designed to be easily parsed by postprocessors.  Please
-        see  OUTPUT  section below for details.
-
-        For the results,  we have to distinguish  those  returned by  +cipher
-        command  and those from  all other tests and checks like   +check  or
-        +info  command.
-
-      +cipher
-
-          The cipher checks will return  one line for each  tested cipher. It
-          contains at least the cipher name,  'yes'  or  'no'  whether  it is
-          supported or not, and a security qualification. It may look like:
-              AES256-SHA       yes    HIGH
-              NULL-SHA         no     weak
-
-          Depending on the used  --legacy=*  option the format may differ and
-          also contain more information.  For details see  --legacy=*  option
-          below.
-
-          The text for security qualifications are (mainly) those returned by
-          openssl (version 1.0.1): LOW, MEDIUM, HIGH and WEAK.
-          The same texts, but with all lower case characters, are used if the
-          qualification was adapted herein. Following rules for adjusting the
-          qualification were used:
-
-            * weak:
-              ** all *NULL* ciphers
-              ** all *RC2* and  *RC4*  ciphers
-              ** all *EXPORT*  ciphers
-              ** all *anon* (aka ADH aka DHA) ciphers
-              ** all *CBC* and *CBC3* (aka 3DES) and DES ciphers
-            * low:
-            * high:
-              ** all *AES(128|256)* ciphers
-              ** all *CAMELLIA* ciphers
-
-      +check
-
-          These tests return a line with  a label  describing the test  and a
-          test result for it. The  idea is to report  'yes'  if the result is
-          considered "secure"  otherwise report  'no'  followed by the reason
-          why it's considered insecure. Example of a check considered secure:
-              Label of the performed check:           yes
-
-          Example of a check considered insecure:
-              Label of the performed check:           no (reason why)
-
-          Note  that there are tests where the results  appear confusing when
-          first viewed, like for www.wi.ld:
-              Certificate is valid according given hostname:  no (*.wi.ld)
-              Certificate's wildcard does not match hostname: yes
-
-          This can for example occur with:
-              Certificate Common Name:                *.wi.ld
-              Certificate Subject's Alternate Names:  DNS:www.wi.ld
-
-          Please check the result with the  +info  command also to  verify if
-          the check sounds reasonable.
-
-      +info
-
-          The test result contains detailed information. The labels there are
-          mainly the same as for the  +check  command.
+          * aha              0.5-1
+          * perldoc          v3.2801
+          * pod2man
+          * pod2usage
+          * podviewer        v0.18
+          * tkpod
+          * tput
+          * stty
 
 
 COMMANDS
@@ -416,8 +377,8 @@ COMMANDS
 
           Different output formats are used for the  --legacy  option:
             * --legacy=simple   tabular output of cipher values
-            * --legacy=full     as --legacy=simple but more data
-            * --legacy=openssl  output like with +ciphers command
+            * --legacy=full     as  --legacy=simple  but more data
+            * --legacy=openssl  output like with  +ciphers  command
             * --legacy=ssltest  output like "ssltest --list"
 
 #          Use  --v  option to show more details.
@@ -520,7 +481,7 @@ COMMANDS
 
           Various checks according certificate's extended Validation (EV).
 
-          Hint: use option  --v --v  to get information about failed checks.
+          Hint: use option  --v  --v  to get information about failed checks.
 
       +sizes
 
@@ -537,10 +498,10 @@ COMMANDS
 
           Dumps internal data for SSL connection and target certificate. This
           is mainly for debugging and  should not be used together with other
-          commands (except +cipher).
+          commands (except  +cipher).
           Each key-value pair is enclosed in  '#{'  and  '#}' .
 
-          Using  --trace --trace  dumps data of  Net::SSLinfo  too.
+          Using  --trace  --trace  dumps data of  Net::SSLinfo  too.
 
       +exec
 
@@ -558,9 +519,6 @@ COMMANDS
           Check target for ciphers,  either all ciphers, or ciphers specified
           with  --cipher=CIPHER  option.
 
-          Note that ciphers not supported by the local SSL implementation are
-          not checked by default, use  +cipherall or +cipherraw   command.
-
           Use  --v  option to see all ciphers being checked.
 
       +cipherraw
@@ -570,12 +528,8 @@ COMMANDS
 
           In contrast to  +cipher  this command has some options to tweak the
           cipher tests, connection results and some strange behaviours of the
-          target. See  X&Options for  cipherall and cipherraw  command&  for
+          target. See  X&Options for  +cipherall and +cipherraw  command&  for
           details.
-
-      +cipherall
-
-          Same as  +cipherraw  but ouput format similar to  +cipher  command.
 
       +cipher-default
 
@@ -647,17 +601,6 @@ COMMANDS
 
     Notes about commands
 
-      +cipher vs. +cipherall
-
-          +cipher  can only check for ciphers - more precise: cipher suites -
-          provided by the local SSL implementation (i.e. libssl).
-          +cipherall  can check for any cipher,  as it just uses the cipher's
-          integer value in the range 0 .. 65532.
-
-      +cipherall vs. +cipherraw
-
-          These commands are identical, just the output format is different.
-
       +cipher vs. +cipher-dh
 
           While  +cipher  prints checked ciphers,  +cipher-dh  prints ciphers
@@ -670,7 +613,7 @@ COMMANDS
 
           +cipher  lists a summary of ciphers selected by the server for each
           protocol requested by the user (for example by using options like:
-          --sslv3 --tlsv1 etc.).  When the  --v  option is used, all selected
+          --sslv3  --tlsv1 etc.). When the  --v  option is used, all selected
           ciphers for all known protocols are listed. This summary focuses on
           counts for various ciphers.
 
@@ -712,9 +655,6 @@ COMMANDS
           that it prefers to use the most strongest cipher. In this case it's
           obvious that 'SSLHonorCipherOrder' is set (exceptions see below).
 
-          +cipherall  uses a  more accurate algorithm  to detect the server's
-          cipher order.
-
           Exceptions:
           If either, the server or the client,  uses only one cipher suite in
           the list, SSLHonorCipherOrder cannot be detected at all.
@@ -723,9 +663,9 @@ COMMANDS
 
       +extensions vs. +tlsextensions
 
-          +extensions  shows the "Certificate extensions" and  +tlsextensions
-          will show the TLS protocol extensions.
-          Use  +tlsextdebug  to show more informations about the TLS protocol
+          "Certificate extensions" are shown with  +extensions  while the TLS
+          protocol extensions are shown with  +tlsextensions.
+          Use  +tlsextdebug  to show more information about the  TLS protocol
           extensions.
 
       +http2 +spdy +spdy3 +spdy31 +spdy4 +prots
@@ -754,9 +694,11 @@ OPTIONS
 
       --h
 
+          Brief documentation of  --help*  options/commands.
+
       --help
 
-          WYSIWYG
+          Complete user documentation.
 
       --help=cmds
 
@@ -799,7 +741,7 @@ OPTIONS
 
       --help=data
 
-          Show available informations.
+          Show available information.
 
       --help=data-cfg
       --help=cfg-data
@@ -852,14 +794,15 @@ OPTIONS
 
           Show list of cipherranges (see  --cipherrange=RANGE).
 
-      --help=score
-
-          Show score value for each check.
-          Value is printed in format to be used for  --cfg-score=KEY=SCORE.
-
-          Note that the  sequence  of options  is important.  Use the options
-          --trace  and/or  --cfg-score=KEY=SCORE  before  --help=score.
-
+# score will be removed, so don't anounce it
+#      --help=score
+#
+#          Show score value for each check.
+#          Value is printed in format to be used for  --cfg-score=KEY=SCORE.
+#
+#          Note that the  sequence  of options  is important.  Use the options
+#          --trace  and/or  --cfg-score=KEY=SCORE  before  --help=score.
+#
       --help=toc
       --help=content
 
@@ -953,7 +896,7 @@ OPTIONS
       --host=HOST --port=PORT HOST:PORT HOST
 
           When giving more than one HOST argument,  the sequence of the given
-          HOST argument and the given  --port=PORT  and the given --host=HOST
+          HOST argument and the given  --port=PORT and the given  --host=HOST
           options are important.
           The rule how ports and hosts are mapped is as follows:
 
@@ -1033,7 +976,7 @@ OPTIONS
           * any check returns  'no', except if  'no (<<...>>)'
           * insecure protocols are available
           * insecure ciphers are supported
-          * ciphers without PFS are supported (disable with --exitcode-cipher)
+          * ciphers without PFS are supported, disable with  --exitcode-cipher
 
           In particular, the status code will be the total count of all these
           checks. The status code will also be printed at end, like:
@@ -1042,7 +985,7 @@ OPTIONS
           Parts of these checks can be diasabled,  see  --exitcode-*  options
           below.
 
-          Use  --v or --exitcode-v  to see details about the performed checks.
+          Use  --v or  --exitcode-v to see details about the performed checks.
 
           Functionality implemented experimental, may change in future.
 
@@ -1075,7 +1018,7 @@ OPTIONS
           Use  "openssl s_slient ..."  call to retrieve more information from
           the SSL connection.  This is disabled by default on Windows because
           of performance problems. Without this option (default on Windows !)
-          following informations are missing:
+          following information are missing:
               compression, expansion, renegotiation, resumption,
               selfsigned, verify, chain, protocols, DH parameters
 
@@ -1088,7 +1031,7 @@ OPTIONS
 
           Do not use external "openssl"  tool to retrieve information. Use of
           "openssl" is disabled by default on Windows.
-          Note that this results in some missing informations, see above.
+          Note that this results in some missing information, see above.
 
       --openssl=TOOL
 
@@ -1134,7 +1077,7 @@ OPTIONS
           paths for searching dynamic shared libraries.
           Default is LD_LIBRARY_PATH.
 
-          Check your system for the proper name, i.e.:
+          Check your system for the proper name, for example:
               DYLD_LIBRARY_PATH, LIBPATH, RPATH, SHLIB_PATH.
 
       --ssl-error
@@ -1250,13 +1193,16 @@ OPTIONS
 
     Options for SSL connection to target
 
+      --ciphermode=intern
+      --ciphermode=openssl
+      --ciphermode=ssleay
       --ciphermode=MODE
 
           Following 'MODE's are supported:
           * 'intern'    scan for ciphers using internal method; (default)
           * 'openssl'   scan for ciphers using external openssl executable
           * 'ssleay'    scan for ciphers using  IO::Socket  and  Net::SSLeay
-          * 'dump'      same as 'intern' but print  all cipher informations,
+          * 'dump'      same as 'intern' but print  all cipher information,
                         useful when postprocessed by contrib/* tools
 
       --cipher=CIPHER
@@ -1316,15 +1262,6 @@ OPTIONS
 #         IO::Socket::SSL->new() does not return a proper error
 #         see in IO::Socket::SSL.pm  Net::SSLeay::CTX_set_cipher_list()  call
 #
-#     --local
-#
-#         It does not make much sense trying a connection with a cipher which
-#         is  not supported  by the local SSL implementation. Hence these are
-#         silently ignored by default.
-#         With this option we try to use such ciphers also.
-#
-#         Option reserved for future use ...
-#
 
       --sslv2
       --sslv3
@@ -1337,7 +1274,7 @@ OPTIONS
       --dtlsv11
       --dtlsv12
       --dtlsv13
-      --SSL, -protocol SSL
+      --SSL, --protocol SSL
 
       --no-sslv2
       --no-sslv3
@@ -1411,7 +1348,7 @@ OPTIONS
       --sni-toggle
       --toggle-sni
 
-          Test with and witout SNI mode (+cipherall  only).
+          Test with and witout SNI mode.
 
       --force-sni
 
@@ -1551,7 +1488,7 @@ OPTIONS
           --cipher-npn=,,  sets list to empty element "".
 
           Note:  setting empty list or element most likely does not work with
-          openssl executable (i.e.  --force-openssl).
+          openssl executable (for example  --force-openssl).
 
       --cipher-curve=NAME
 
@@ -1562,7 +1499,7 @@ OPTIONS
           --cipher-curve=,,  sets list to empty element "".
 
           Note:  setting empty list or element most likely does not work with
-          openssl executable (i.e.  --force-openssl).
+          openssl executable (for example  --force-openssl).
 
     Options for  +cipherall and +cipherraw  command
 
@@ -1606,7 +1543,7 @@ OPTIONS
           offered ciphers is supported by the server.
 
           Continue testing with next ciphers  when the target  disconnects or
-          does not send data within specified timeout (see --timeout).
+          does not send data within specified timeout (see  --timeout).
           Useful for TLS intolerant servers.
 
       --no-ssl-nodata-nocipher
@@ -1682,7 +1619,7 @@ OPTIONS
 
           Defines the format of the descriptive text (label) for  +check  and
           +info  command.
-          
+
           Following 'TYPE's are supported:
 
       --label=long
@@ -1756,7 +1693,7 @@ OPTIONS
       --legacy=quick
 
           Internal format: use tab as separator; ciphers are printed with bit
-          length (implies --tab).
+          length (implies  --tab).
 
       --legacy=simple
 
@@ -1775,7 +1712,7 @@ OPTIONS
             Note:  all data will be printed as is,  without  additional label
             or formatting. It's recommended to use the  option in conjunction
             with exactly one command.  Otherwise the user needs  to know  how
-            to "read"  the printed data.
+            to "read" the printed data.
 
           * 'hex'       Convert some data to hex: 2 bytes separated by ':'.
           * '0x'        Convert some data with hex values:
@@ -1783,6 +1720,33 @@ OPTIONS
           * '/x'        Same as  --format=\x
           * '\x'        Convert some data with hex values:
                            2 bytes preceded by '\x' and no separating char.
+
+      --tty
+      --format-tty
+
+          Get the screen width and then adapt  output of documentation to fit
+          to that width. If the environment variable 'COLUMNS' is not set the
+          system's 'tput' or 'stty' command is used to get the screen width.
+
+          It's a very simple approach to make texts better readable on narrow
+          devices like tablets. For more details, please see:
+
+
+              perdoc $0   # the section Note:tty  there
+
+      --format-width=NN
+
+          Set the screen width to 'NN' characters (see  --format-tty  also).
+          Default will be calculated automatically.
+
+      --format-ident=NN
+
+          Set the amount of spaces used for identation (see  --tty  also).
+          Default is 2.
+
+      --format-arrow=CHR
+
+          Set the additional chacacter when lines are split. Default: ↲
 
       --header
 
@@ -1794,7 +1758,7 @@ OPTIONS
           Do not print formatting header.
           Usefull if raw output should be passed to other programs.
 
-          Note: must be used on command line to inhibit all header lines.
+          Note: must be used on command-line to inhibit all header lines.
 
       --ignore-cmd=CMD
       --ignore-output=CMD
@@ -1891,7 +1855,7 @@ OPTIONS
           $0 --help=alias
 
                 Tool's Option       (Tool)          $0 Option
-              #--------------------+---------------+------------------------#
+             #---------------------+---------------+------------------------
               * --checks CMD        (TLS-Check.pl)  same as  +CMD
               * -h, -h=HOST         (various tools) same as  --host HOST
               * -p, -p=PORT         (various tools) same as  --port PORT
@@ -1904,13 +1868,13 @@ OPTIONS
               * -connect, -H, -u, -url, -U          ignored
               * -noSSL                              same as  --no-SSL
               * -no_SSL                             same as  --no-SSL
-              #--------------------+---------------+------------------------#
+             #---------------------+---------------+------------------------
 
         For definition of  'SSL'  see  --SSL  and  --no-SSL  above.
 
-    Options for customization
+    Options for customisation
 
-          For general descriptions please see  CUSTOMIZATION  section below.
+          For general descriptions please see  CUSTOMISATION  section below.
 
       --cfg_cmd=CMD=LIST
       --cfg-cmd=CMD=LIST
@@ -1929,20 +1893,21 @@ OPTIONS
 
           Main purpose is to reduce list of commands or to print them sorted.
 
-      --cfg-score=KEY=SCORE
-
-          Redefine value for scoring. Sets  %checks{KEY}{score}  to  'SCORE'.
-          Most score values are set to 10 by default. Values '0' .. '100' are
-          allowed.
-
-          To get a list of current score settings, use:
-              $0 --help=score
-
-          For deatils how scoring works, please see  SCORING  section.
-
-          Use the  --trace-key  option for the  +info  and/or  +check command
-          to get the values for  'KEY'.
-
+# score will be removed, so don't anounce it
+#      --cfg-score=KEY=SCORE
+#
+#          Redefine value for scoring. Sets  %checks{KEY}{score}  to  'SCORE'.
+#          Most score values are set to 10 by default. Values '0' .. '100' are
+#          allowed.
+#
+#          To get a list of current score settings, use:
+#              $0 --help=score
+#
+#          For deatils how scoring works, please see  SCORING  section.
+#
+#          Use the  --trace-key  option for the  +info  and/or  +check command
+#          to get the values for  'KEY'.
+#
       --cfg_checks=KEY=TEXT
       --cfg-checks=KEY=TEXT
       --cfg_data=KEY=TEXT
@@ -2068,16 +2033,16 @@ OPTIONS
 
       --trace --trace --trace --trace
 
-          Print processing of all command line arguments.
+          Print processing of all command-line arguments.
 
       --trace-cli
 
-          Print complete command line first. Used for internal testing.
+          Print complete command-line first. Used for internal testing.
 
       --trace-arg
       --trace--
 
-          Print command line argument processing.
+          Print command-line argument processing.
 
 # cannot use --trace=  'cause = will be removed (CGI mode)
 
@@ -2090,10 +2055,10 @@ OPTIONS
 
           Print some internal variable names in output texts (labels).
           Variable names are prefixed to printed line and enclosed in  # .
-          Example without --trace-key :
+          Example without  --trace-key :
               Certificate Serial Number:          deadbeef
 
-          Example with    --trace-key :
+          Example with     --trace-key :
               #serial#          Certificate Serial Number:          deadbeef
 
       --trace-time
@@ -2105,18 +2070,20 @@ OPTIONS
 
           Alias for  --trace-VALUE  options (see above).
 
-            Trace Option        Alias Option
-          #--------------------+----------------------------#
+            Trace Option          Alias Option
+          #--------------------+----------------------------
           * --trace=1           same as  --trace
-          * --trace=2           same as  --trace --trace
+          * --trace=2           same as  --trace  --trace
           * --trace=arg         same as  --trace-arg
           * --trace=cmd         same as  --trace-cmd
+          * --trace=cli         same as  --trace-cli
           * --trace=key         same as  --trace-key
           * --trace=time        same as  --trace-time
+          #--------------------+----------------------------
 
       --trace=FILE
 
-          Use FILE instead of the default  RC-FILE, i.e. '.$0'.
+          Use FILE instead of the default  RC-FILE, for example '.$0'.
 
       --trace-me
 
@@ -2125,12 +2092,6 @@ OPTIONS
       --trace-not-me
 
           Print debugging messages for modules only, but not $0 itself.
-
-      --trace-sub
-      +traceSUB
-
-          Print formatted list of internal functions with their description.
-          Not to be intended in conjunction with any target check.
 
       --hint
 
@@ -2188,14 +2149,14 @@ LAZY SYNOPSIS
         We support following options, which are all identical, for lazy users
         and for compatibility with other programs.
 
-      Option Variants
+      Option variants
 
           * --port PORT
           * --port=PORT
 
         This applies to most such options,  --port  is just an example.  When
         used in the  RC-FILE, the  --OPTION=VALUE  variant must be used.
-# does not apply to --trace option
+# does not apply to  --trace  option
 
       Option Names
 
@@ -2219,21 +2180,88 @@ LAZY SYNOPSIS
 
         See  X&Options vs. Commands&  in  OPTIONS  section above
 
+
+RESULTS
+
+        All output is designed to be easily parsed by postprocessors.  Please
+        see  OUTPUT  section below for details.
+
+        For the results,  we have to distinguish  those  returned by  +cipher
+        command  and those from  all other tests and checks like   +check  or
+        +info  command.
+
+      +cipher
+
+          The cipher checks will return  one line for each  tested cipher. It
+          contains at least the cipher name,  'yes'  or  'no'  whether  it is
+          supported or not, and a security qualification. It may look like:
+              AES256-SHA       yes    HIGH
+              NULL-SHA         no     weak
+
+          Depending on the used  --legacy=*  option the format may differ and
+          also contain more information.  For details see  --legacy=*  option
+          below.
+
+          The text for security qualifications are (mainly) those returned by
+          openssl (version 1.0.1): LOW, MEDIUM, HIGH and WEAK.
+          The same texts, but with all lower case characters, are used if the
+          qualification was adapted herein. Following rules for adjusting the
+          qualification were used:
+
+            * weak:
+              ** all *NULL* ciphers
+              ** all *RC2* and  *RC4*  ciphers
+              ** all *EXPORT*  ciphers
+              ** all *anon* (a.k.a ADH a.k.a DHA) ciphers
+              ** all *CBC* and *CBC3* (a.k.a 3DES) and DES ciphers
+            * low:
+            * high:
+              ** all *AES(128|256)* ciphers
+              ** all *CAMELLIA* ciphers
+
+      +check
+
+          These tests return a line with  a label  describing the test  and a
+          test result for it. The  idea is to report  'yes'  if the result is
+          considered "secure"  otherwise report  'no'  followed by the reason
+          why it's considered insecure. Example of a check considered secure:
+              Label of the performed check:           yes
+
+          Example of a check considered insecure:
+              Label of the performed check:           no (reason why)
+
+          Note  that there are tests where the results  appear confusing when
+          first viewed, like for www.wi.ld:
+              Certificate is valid according given hostname:  no (*.wi.ld)
+              Certificate's wildcard does not match hostname: yes
+
+          This can for example occur with:
+              Certificate Common Name:                *.wi.ld
+              Certificate Subject's Alternate Names:  DNS:www.wi.ld
+
+          Please check the result with the  +info  command also to  verify if
+          the check sounds reasonable.
+
+      +info
+
+          The test result contains detailed information. The labels there are
+          mainly the same as for the  +check  command.
+
 CHECKS
 
         All SSL related check performed by the tool will be described here.
 
-    General Checks
+    General checks
 
         Lookup the IP of the given hostname (FQDN), and then tries to reverse
         resolve the FQDN again.
 
-    SSL Ciphers
+    SSL ciphers
 
         Check which ciphers are supported by target. Please see  RESULTS  for
         details of this check.
 
-    SSL Connection
+    SSL connection
 
       heartbeat
 
@@ -2269,7 +2297,7 @@ CHECKS
 
         Please see also  CHECKS  ALPN and NPN  below.
 
-    SSL Vulnerabilities
+    SSL vulnerabilities
 
       ADH
 
@@ -2394,7 +2422,7 @@ CHECKS
         up to 31 random bytes from memory as Session Ticket, see CVE-2016-9244
         and https://filippo.io/Ticketbleed/ .
 
-    Target (server) Configuration and Support
+    Target (server) configuration and support
 
       BEAST, BREACH, CRIME, DROWN, FREAK, Logjam, Lucky13, POODLE, RC4, ROBOT,
       SLOTH, Sweet32
@@ -2411,7 +2439,7 @@ CHECKS
         NOT YET IMPLEMENTED
         Check if the server allows changing the protocol.
 
-      DH Parameter
+      DH parameter
 
         Check if target's DH Parameter is less 512 or 2048 bits.
 
@@ -2422,10 +2450,10 @@ CHECKS
         The check does not send other methods (like CONNECT) to verify if the
         protocol is fully supported.
 
-        Supporting SSTP is considered insecure, because SSTP allows to tunnel 
+        Supporting SSTP is considered insecure, because SSTP allows to tunnel
         other, probably insecure, protocols.
 
-    Target (server) Certificate
+    Target (server) certificate
 
       Certificate Hashes
 
@@ -2436,7 +2464,7 @@ CHECKS
 
         Provided certificate by target should not be a Root CA.
 
-      Self-signed Certificate
+      Self-signed certificate
 
         Certificate should not be self-signed.
 
@@ -2529,7 +2557,7 @@ CHECKS
 
         See  LIMITATIONS  also.
 
-    Target (server) HTTP(S) Support
+    Target (server) HTTP(S) support
 
       STS header (see RFC 6797)
 
@@ -2655,7 +2683,7 @@ die EC-Verfahren ...  und weitere Erläuterungen siehe Bemerkung 4 in Kapitel 3 
 
         3.2   SSL/TLS_Versionen
 
-          Only TLSv1.2 allowed (except for +tr-02102-  which also allows
+          Only TLSv1.2 allowed (except for  +tr-02102-  which also allows
           TLSv1.1)
 
         3.3.1 Empfohlene Cipher Suites
@@ -2837,7 +2865,7 @@ die EC-Verfahren ...  und weitere Erläuterungen siehe Bemerkung 4 in Kapitel 3 
 
           SSLv2 and SSLv3 must not be supportetd.
           TLSv1 should only be supported if there is no TLSv1.1 or TLSv1.2.
-          Either TLSv1.1 or TLSv1.2 must be supported, prefered is TLSv1.2.
+          Either TLSv1.1 or TLSv1.2 must be supported, preferred is TLSv1.2.
 
         3.1.2.  DTLS Protocol Versions
 
@@ -2921,7 +2949,7 @@ OUTPUT
           * Label and value for all checks are separated by at least one  TAB
             character.
           * Texts for additional information are enclosed in '<<'  and  '>>'.
-          * 'N/A'  is used when no proper informations was found or provided.
+          * 'N/A'  is used  when no proper information was found or provided.
             Replace  'N/A'  by whatever you think is adequate:  "No answer",
             "Not available",  "Not applicable",  ...
 
@@ -2930,7 +2958,7 @@ OUTPUT
 
         For more details on these lines, please refer to  RESULTS  above.
 
-        When used in  --legacy=full  or --legacy=simple  mode, the output may
+        When used in  --legacy=full  or  --legacy=simple mode, the output may
         contain formatting lines for better (human) readability.
 
     Errors, Warnings, Hints
@@ -2945,7 +2973,7 @@ OUTPUT
         are defined statically in the program code, or can be added on demand
         by using the option  --cfg-hint=KEY=TEXT .
 
-    Postprocessing Output
+    Postprocessing output
 
         It is recommended to use the   --legacy=quick   option, if the output
         should be postprocessed, as it omits the default separation character
@@ -2968,24 +2996,46 @@ OUTPUT
 #        #----------------------+-------+-------+----------------
 
 
-CUSTOMIZATION
+EXIT STATUS
 
-        This tools can be customized as follows:
+        Following exit codes are used:
 
-        * Using command line options
+          * 0   - normal usage and execution
+          * 2   - command-line parsing failed, command or option missing
+          * >0  - only if  --exitcode  was used
+        
+ENVIRONMENT
+
+        Following environment variables are incorporated:
+
+          * LD_LIBRARY_PATH - used and extended with definitions from options
+          * OPENSSL         - if set, full path to openssl executable
+          * OPENSSL_CONF    - if set, full path to openssl's openssl.cnf or
+                              directory where to find openssl.cnf
+#         * OPENSSL_FIPS    -
+#         * OPENSSL_ENGINES -
+#         * OPENSSL_ALLOW_PROXY
+#         * OPENSSL_ALLOW_PROXY_CERTS
+
+
+CUSTOMISATION
+
+        This tool can be customised as follows:
+
+        * Using command-line options
 
             This is a simple way to redefine  specific settings.  Please  see
             CONFIGURATION OPTIONS  below.
 
-        * Using Configuration file
+        * Using configuration file
 
             A configuration file can contain multiple configuration settings.
             Syntax is simply  KEY=VALUE. Please see CONFIGURATION FILE below.
 
         * Using resource files
 
-            A resource file can contain multiple command line options. Syntax
-            is the same as for command line options iteself.  Each  directory
+            A resource file can contain multiple command-line options. Syntax
+            is the same as for command-line options iteself.  Each  directory
             may contain its own resource file. Please see  RC-FILE  below.
 
         * Using debugging files
@@ -2999,7 +3049,7 @@ CUSTOMIZATION
             This file contains  user specified  program code.  It can also be
             (mis-)used to redefine all settings. Please see USER-FILE  below.
 
-        Customization is done by redefining values in internal data structure
+        Customisation is done by redefining values in internal data structure
         which are:  %cfg,  %data,  %checks,  %text,  %scores.
 
         Unless used in  DEBUG-FILE  or  USER-FILE,  there is  no need to know
@@ -3012,7 +3062,7 @@ CUSTOMIZATION
         in "Performed Checks" section.  And texts of keys in  %text  are used
         for additional information lines or texts (mainly beginning with '=').
 
-     Configuration File vs. RC-FILE vs. DEBUG-FILE
+     Configuration file vs. RC-FILE vs. DEBUG-FILE
 
         * CONFIGURATION FILE
 
@@ -3071,8 +3121,8 @@ CUSTOMIZATION
         For example  when used with  --cfg-text=FILE  only values for  %text
         will be set, when used with  --cfg-data=FILE  only values for  %data
         will be set, and so on. 'KEY' will not be used when 'KEY=TEXT' is an
-        existing filename. It i recommended to use a non-existing key, i.e.:
-        --cfg-text=my_file=some/path/to/private/file .
+        existing filename.  It is recommended to use a non-existing key, for
+        example  --cfg-text=my_file=some/path/to/private/file .
 
     RC-FILE
 
@@ -3082,7 +3132,7 @@ CUSTOMIZATION
         '.'  (dot),  for example:  '.$0'.
 
         A  rc-file  can contain any of the commands and options valid for the
-        tool itself. The syntax for them is the same as on command line. Each
+        tool itself. The syntax for them is the same as on command-line. Each
         command or option must be in a single line. Any empty or comment line
         will be ignored. Comment lines start with  '#'  or  '='.
 
@@ -3093,7 +3143,7 @@ CUSTOMIZATION
         Where 'CFG' is any of:  'cmd', 'check', 'data', 'text'  and  'KEY' is
         any key from internal data structure (see above).
 
-        All commands and options given on command line will  overwrite  those
+        All commands and options given on command-line will  overwrite  those
         found in the rc-file.
 
     DEBUG-FILE
@@ -3118,10 +3168,10 @@ CUSTOMIZATION
     SHELL TWEAKS
 
         Configuring the shell environment where the tool is startet,  must be
-        done before the tools starts.  It is  not really  a task for the tool
-        itself, but it can simplify your life, somehow.
+        done before the tool starts. It isn't a task for the tool itself, but
+        it can simplify your life, somehow.
 
-        There exist customizations for some commonly used shells,  please see
+        There exist customisations for some commonly used shells,  please see
         the files in the ./contrib/ directory.
 
     COMMANDS
@@ -3162,7 +3212,7 @@ CIPHER NAMES
 
         [openssl] ... openssl 1.0.1
 
-        If in any doubt, use  +list --v  to get an idea about the mapping.
+        If in any doubt, use  +list  --v  to get an idea about the mapping.
         Use  --help=regex  to see which regex are used to handle all variants
         herein.
 
@@ -3222,7 +3272,7 @@ CIPHER NAMES
         depending on the standard, and/or tool, or version of a tool you use.
 
         As a result, we cannot use human readable cipher names as  identifier
-        (aka unique key), as there are  to many aliases  for the same cipher.
+        (a.k.a unique key), as there are to many aliases for the same cipher.
         And also the number  cannot be used  as unique key, as a key may have
         multiple ciphers assigned.
 
@@ -3276,9 +3326,6 @@ KNOWN PROBLEMS
 
         More details why the connection failed can be seen using  --trace=2 .
 
-        If the targets supports SSL, it should be at least possible to check
-        for supported ciphers using  +cipherall  instead of  +cipher .
-
 
     Use of uninitialized value $headers in split ... do_httpx2.al)
 
@@ -3300,7 +3347,7 @@ KNOWN PROBLEMS
 
         See also  X&Note on SSL versions& .
 
-        Workaround: use option: --no-sslv2 --no-sslv3 --no-tlsv13 --no-dtlsv1
+        Workaround: use option:  --no-sslv2  --no-sslv3  --no-tlsv13  --no-dtlsv1
 
     Use of uninitialized value $_[0] in length at (eval 4) line 1.
 
@@ -3362,7 +3409,7 @@ KNOWN PROBLEMS
 
         Workaround: try to use  --openssl=TOOL  option.
 
-        This text may appears in any of the compliance checks (like +rfc7525)
+        This text may appear in any of the compliance checks (like  +rfc7525)
         which may be a false positive.  For these checks openssl is also used
         to get the DH Parameter.
 
@@ -3382,13 +3429,13 @@ KNOWN PROBLEMS
         or
               $0 +help | more
 
-    Character set (like UTF-8) not recognized in some tools
+    Character set (like UTF-8) not recognised in some tools
 
-        Some tools do not diplay all characters properly,  i.e. some versions
-        of podviewer. It is not the obligation of this tool to fix well known
-        bugs in other tools. However, we can offer workarounds.
+        Some tools  do not display all characters properly,  for example some
+        versions of  podviewer.  It is not the obligation of this tool to fix
+        well known bugs in other tools. However, we can offer workarounds.
 
-        Workaround: generate the affected output using --std-format=* options
+        Workaround: generate the affected output using  --std-format=*  options
         For example:
               $0 --no-rc --std-format=raw --help=gen-pod
 
@@ -3414,7 +3461,7 @@ KNOWN PROBLEMS
               C:\Programs\perl\bin\perl.exe $0 --help=FAQ
 
 
-    Performance Problems
+    Performance problems
 
         There are various reasons when the program responds slow, or seems to
         hang. Performance issues are most likely a target-side problem.  Most
@@ -3440,7 +3487,7 @@ KNOWN PROBLEMS
 
           g) target does not respond at all and/or blocks
              Use  --ssl-error
-             For a detailed description, please see X&Connection Problems&.
+             For a detailed description, please see X&Connection problems&.
 
         Other options which may help to get closer to the problem's cause:
         --trace-time,  --timeout=SEC,  --trace,  --trace-cmd
@@ -3509,13 +3556,13 @@ LIMITATIONS
 
     Target Certificate Chain Verification
 
-        The systems default capabilities i.e. libssl.so, openssl, are used to
-        verify the target's certificate chain.  Unfortunately various systems
-        have implemented different  approaches and rules how identify and how
-        to report a successful verification.  As a consequence  this tool can
-        only return the  same information about the chain verification as the
-        used underlying tools.  If that information is trustworthy depends on
-        how trustworthy the tools are.
+        The systems default capabilities for example  libssl.so, openssl, are
+        used to verify the target's certificate chain.  Unfortunately various
+        systems have implemented different  approaches and rules how identify
+        and how to report a successful verification.  Consequently, this tool
+        can only return the same information  about the chain verification as
+        the used underlying tools. If that information is trustworthy depends
+        on how trustworthy the tools are.
 
         These limitations apply to following commands:
           * +verify
@@ -3525,13 +3572,13 @@ LIMITATIONS
           * +chain_verify,  +verify,  +error_verify,  +chain,  +s_client
           * --ca-file,  --ca-path,  --ca-depth
 
-    User Provided Files
+    User provided files
 
         Please note that there cannot be any guarantee that the code provided
         in the  DEBUG-FILE  o-saft-dbx.pm  or  USER-FILE  o-saft-usr.pm  will
         work flawless. Obviously this is the user's responsibility.
 
-    Problems and Errors
+    Problems and errors
 
         Checking the target for supported ciphers may return that a cipher is
         not supported by the server  misleadingly.  Reason is most likely  an
@@ -3559,14 +3606,14 @@ LIMITATIONS
           * -tlsextdebug        --no-tlsextdebug
           * -alpn               --no-alpn
 
-    Connection Problems
+    Connection problems
 
         Sometimes the connection cannot be established. This may have various
         reasons.  Unfortunaly this script seems to hang then.  In  particular
-        when checking for ciphers with  +cipher  or  +cipherall  . The reason
-        is most likely that the server does not respond to the TCP/IP request
-        and hence the script closes the connection after the configured time-
-        out (see  --timeout=SEC  option).
+        when checking for ciphers with  +cipher  command.  The reason is most
+        likely that the server does not respond to the TCP/IP request,  hence
+        the script closes the connection after the configured timeout (please
+        see  --timeout=SEC  option).
 
         Continous connection attempts  can be inhibited with the  --ssl-error
         option, which is set by default. Avoiding further connections results
@@ -3575,9 +3622,9 @@ LIMITATIONS
         It is a trade-off to wait for all information done accurately,  or to
         get the results quickly. The logic to stop connecting for --ssl-error
         can be controlled with following additional options:
-          * --ssl-error-max=CNT     - max. continous errors
-          * --ssl-error-timeout=SEC - treat a failure as error after timeout
-          * --ssl-error-total=CNT   - max. amount of errors
+          * --ssl-error-max=CNT      - max. continous errors
+          * --ssl-error-timeout=SEC  - treat a failure as error after timeout
+          * --ssl-error-total=CNT    - max. amount of errors
 
         This means that no more connections are made when more than
           * --ssl-error-max errors occour sequentialy
@@ -3599,10 +3646,10 @@ LIMITATIONS
         target. For example, continous but not consecutive timeouts may indi-
         cate a bad or instable network connection, but not that the target to
         be connected blocks. In such a case sequence of timeouts like follows
-        may be observed (assuming --ssl-error-max=3):
+        may be observed (assuming  --ssl-error-max=3):
               0 5 1 2 2 2 4 2 3 2 3 3 3 2
-              . . . ^                 ^____ stop for --ssl-error-timeout=3
-              . . . |______________________ stop for --ssl-error-timeout=2
+              . . . ^                 ^____ stop for  --ssl-error-timeout=3
+              . . . |______________________ stop for  --ssl-error-timeout=2
 
         On normal (even slow) network connections  dozens of  connections per
         second are usual, hence the timeout is always  0 or 1.  Based on that
@@ -3611,7 +3658,7 @@ LIMITATIONS
           * --ssl-error-timeout=1
           * --ssl-error-total=10
 
-    Poor Systems
+    Poor systems
 
         Use of  openssl(1)  is disabled by default on  Windows due to various
         performance problems. It needs to be enabled with  --openssl  option.
@@ -3630,10 +3677,11 @@ LIMITATIONS
 
         You have to fiddle around to find the proper one.
 
-    Debug and Trace Output
+    Debug and trace output
 
         When both  --trace-key  and  --trace-cmd  options are used, output is
-        mixed, obviously. Hint: output for --trace-cmd always contains "CMD".
+        mixed, obviously.
+        Hint: output for  --trace-cmd  always contains "CMD".
 
         Any  --trace*  option implies  --trace-time .
 
@@ -3653,7 +3701,7 @@ DEPENDENCIES
         To see which files have been included use:
               $0 +version --v --user
 
-    Perl Modules
+    Perl modules
 
         * IO::Socket::SSL(3pm)
         * IO::Socket::INET(3pm)
@@ -3688,17 +3736,44 @@ INSTALLATION
         detect such insecure settings, functions, etc.,  it needs these dirty
         things enabled. It needs (incomplete list):
 
-          * insecure protocols like SSLv2, SSLv3
-          * more ciphers enabled, like NULL-MD5, AECDH-NULL-SHA, etc.
-          * some SSL extensions and options
+          * insecure protocols like SSLv2, SSLv3,
+          * more ciphers enabled, like NULL-MD5, AECDH-NULL-SHA, etc.,
+          * some SSL extensions and options.
 
         Therefore we recommend to compile and install at least following:
 
-          * OpenSSL  with SSLv2, SSLv3 and more ciphers enabled
+          * OpenSSL  with SSLv2, SSLv3 and more ciphers enabled,
           * Net::SSLeay  compiled with openssl version as described before.
 
         Please read the  SECURITY  section first before following the install
         instructions below.
+
+    Quickstart
+
+        The script  INSTALL.sh  provides a quick method to check, compile and
+        install anything needed. Please see:
+
+          INSTALL.sh --help
+
+        For more details, read on ...
+
+    Requirements for OpenSSL
+
+        To build openssl following packages are requred  (note that the names
+        may differ depending on the used platform):
+          * libidn11-dev
+
+          * libidn2-0-dev
+          * libgmp-dev
+          * libzip-dev
+          * libsctp-dev
+          * libkrb5-dev
+
+        Also, following Perl modules should be installed:
+          * Module::Build
+          * Net::LibIDN
+          * Net::LibIDN2
+          * Mozilla::CA
 
     OpenSSL
 
@@ -3708,7 +3783,7 @@ INSTALLATION
         Other possibilities are:
           * compiling openssl using following sources
             https://github.com/PeterMosmans/openssl/
-            see  X&Example: Compile OpenSSL&,
+            see  X&Example: Compile openssl&,
           * use any of the precomiled versions provided by https://testssl.sh/
           * use Docker owasp/o-saft (which contains a special openssl)
 
@@ -3729,7 +3804,7 @@ INSTALLATION
 
         Note that  Net::SSLeay  needs to be adapted properly then.
 
-    Example: Compile OpenSSL
+    Example: Compile openssl
 
         OpenSSL can be used from http://openssl.org/ or, as recommended, from
         https://github.com/PeterMosmans/openssl/ .
@@ -3920,7 +3995,7 @@ INSTALLATION
         we should see lines similar to those of the last '/usr/local/openssl'
         call. However, it should contain more cipher lines.
 
-    Stand-alone Executable
+    Stand-alone executable
 
         Some people asked for a stand-alone executable (mainly for Windows).
         Even Perl is a scripting language there are situations where a stand-
@@ -4060,7 +4135,7 @@ HACKER's INFO
         system's  libssl.so and libcrypt.so  and the  openssl(1)  executable.
 
         It is possible to provide your own libraries, if the  Perl module and
-        the executable are  linked using  dynamic shared objects  (aka shared
+        the executable are  linked using dynamic shared objects (a.k.a shared
         library, position independent code).
         The appropriate option is  --lib=PATH.
 
@@ -4079,8 +4154,8 @@ HACKER's INFO
         ('exec') itself recursively with all given options, except the option
         itself. The environment variables  'LD_LIBRARY_PATH'  and 'PATH'  are
         set before executing as follows:
-          * prepend  'PATH'  with all values given with  --exe=PATH
-          * prepend  'LD_LIBRARY_PATH'  with all values given with --lib=PATH
+          * prepend  'PATH'  with all values given by  --exe=PATH
+          * prepend  'LD_LIBRARY_PATH'  with all values given by  --lib=PATH
 
 
         This is exactly, what X&Cumbersome Approach& below describes. So these
@@ -4144,7 +4219,7 @@ HACKER's INFO
         Here only the first two libraries are important.  Both,  libcrypto.so
         and libssl.so  need to be version "0.9.8" (in this example).
 
-        2) create a directory for your libraries, i.e.:
+        2) create a directory for your libraries, for example:
 
               mkdir /tmp/dada
 
@@ -4168,7 +4243,7 @@ HACKER's INFO
               $0 +libversion --lib=/tmp/dada -exe=/path/to-openssl
               $0 +list --v   --lib=/tmp/dada -exe=/path/to-openssl
 
-        6) start program with your options, i.e.:
+        6) start program with your options, for example:
 
               $0 --lib=/tmp/dada +ciphers
 
@@ -4270,11 +4345,21 @@ DEBUG
         * --trace
         * --trace-arg
         * --trace-cmd
+        * --trace-cli
         * --trace-key
+        * --trace-me
+        * --trace-time
+        * --trace=FILE
+
+        Please see  OPTIONS  section above for detailed description.
 
         Empty or undefined strings are written as  '<<undefined>>'  in texts.
         Some parameters, in particular those of  HTTP responses,  are written
         as  '<<response>>'.  Long parameter lists are abbreviated with '...'.
+        In general, single-line values are always printed,  multi-line values
+        are printed with  --trace=2  only.
+
+        Hint: start with  --trace-me, then  --trace  and finally  --trace=2 .
 
     Output
 
@@ -4290,7 +4375,7 @@ DEBUG
 
            #o-saft.pl::
            #Net::SSLinfo::
-             Trace information for --trace  options.
+             Trace information for  --trace  options.
 
            #{
              Trace information from  NET::SSLinfo  for  --trace  options.
@@ -4302,7 +4387,7 @@ DEBUG
 
     Using outdated modules
 
-        The tools was designed to work with old Perl modules too.  When using
+        This tool was designed to work with old Perl modules too.  When using
         old modules, a proper  '**WARNING:'  will be printed. These warinings
         cannot be switched of using  --no-warning  .
         The warning also informs about the missing functionality or check.
@@ -4323,10 +4408,12 @@ DEBUG
                   Net::SSLeay::
                   ::OPENSSL_VERSION_NUMBER()       0x268443744
                   ::SSLeay()                       0x268443744
+                  ::SSLEAY_DIR                     OPENSSLDIR: "/usr/local/openssl/ssl"
                   Net::SSLeay::SSLeay_version()    OpenSSL 1.0.2-chacha (1.0.2f-dev)
               = openssl =
-                  version of external executable   OpenSSL 1.0.2-chacha (1.0.2f-dev)
                   external executable              /opt/openssl-chacha/bin/openssl
+                  external executable (TLSv1.3)    openssl
+                  version of external executable   OpenSSL 1.0.2-chacha (1.0.2f-dev)
                   used environment variable (name) LD_LIBRARY_PATH
                   environment variable (content)   <<undef>>
                   path to shared libraries
@@ -4340,14 +4427,24 @@ DEBUG
                   PEM format file with CAs         /etc/ssl/certs/ca-certificates.crt
                   common paths to PEM files for CAs /etc/ssl/certs /usr/lib/certs \
                   .                                 /System/Library/OpenSSL
+                     existing path to CA PEM files /etc/ssl/certs
                   common PEM filenames for CAs     ca-certificates.crt certificates.crt certs.pem
-                  number of supported ciphers      177
+                     existing PEM file for CA      /etc/ssl/certs/ca-certificates.crt
+                  number of supported ciphers      201
                   openssl supported SSL versions   SSLv3 TLSv1 TLSv11 TLSv12
                   o-saft.pl known SSL versions     SSLv2 SSLv3 TLSv1 TLSv11 TLSv12 TLSv13 \
                   .                                DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13
               = o-saft.pl +cipherall =
+                  number of supported ciphers      1280
                   default list of ciphers          0x03000000 .. 0x030000FF, 0x0300C000 .. 0x0300C0FF,
                   .                                0x0300CC00 .. 0x0300CCFF, 0x0300FE00 .. 0x0300FFFF,
+                  long list of ciphers             0x03000000 .. 0x030000FF, 0x0300C000 .. 0x0300FFFF
+                  huge list of ciphers             0x03000000 .. 0x0300FFFF
+                  safe list of ciphers             0x03000000 .. 0x032FFFFF
+                  full list of ciphers             0x03000000 .. 0x03FFFFFF
+                  C0xx list, range C0xx..C0FF      0x0300C000 .. 0x0300C0FF
+                  CCxx list, range CCxx..CCFF      0x0300C000 .. 0x0300C0FF
+                  ECC list, ephermeral ciphers     0x0300C000 .. 0x0300C0FF, 0x0300CC00 .. 0x0300CCFF
               = Required (and used) Modules =
                   @INC                 ./ ./lib . /bin /usr/share/perl5 \
                   .                    /usr/lib/x86_64-linux-gnu/perl5/5.20 \
@@ -4356,19 +4453,20 @@ DEBUG
               =   module name            VERSION  found in
               =   ----------------------+--------+------------------------------------------
                   IO::Socket::INET       1.35     /usr/lib/x86_64-linux-gnu/perl/5.20/IO/Socket/INET.pm
-                  IO::Socket::SSL        2.002    /usr/share/perl5/IO/Socket/SSL.pm
+                  IO::Socket::SSL        2.044    /usr/share/perl5/IO/Socket/SSL.pm
+                  Time::Local            1.2300   /usr/share/perl/5.24/Time/Local.pm
                   Net::DNS               0.81     /usr/lib/x86_64-linux-gnu/perl5/5.20/Net/DNS.pm
                   Net::SSLeay            1.72     /usr/lib/x86_64-linux-gnu/perl5/5.20/Net/SSLeay.pm
-                  Net::SSLinfo           16.06.01 Net/SSLinfo.pm
-                  Net::SSLhello          16.05.16 Net/SSLhello.pm
+                  Net::SSLinfo           19.12.21 Net/SSLinfo.pm
+                  Net::SSLhello          19.12.21 Net/SSLhello.pm
                   Ciphers
-                  osaft                  16.05.10 osaft.pm
+                  osaft                  19.12.26 osaft.pm
 
         Following example shows the result with warnings (line nr. may vary):
 
               === reading: ./.o-saft.pl (RC-FILE done) ===
               === reading: ./Net/SSLhello.pm (O-Saft module done) ===
-              **WARNING: ancient Net::SSLeay 1.35 < 1.49; cannot use ::initialize at /Net/SSLinfo.pm line 481.
+              **WARNING: ancient Net::SSLeay 1.35 < 1.49; cannot use ::initialise at /Net/SSLinfo.pm line 481.
               === reading: ./Net/SSLinfo.pm (O-Saft module done) ===
               **WARNING: ancient perl has no 'version' module; version checks may not be accurate; at o-saft.pl line 1662.
               **WARNING: ancient Net::SSLeay 1.35 < 1.49 detected; at o-saft.pl line 1687.
@@ -4443,16 +4541,50 @@ DEBUG
 
 TESTING
 
-        When talking about "testing the tool", functional tests are meant. So
-        this section describes "developer" rather than "user" options.
+        What is "testing"?
+        This tool itself is for testing something,  so it needs to be explain
+        what testing here is about. Following testing types are distinguished
+        and then described:
 
-        Testing the tool is a challenging task. Beside the oddities described
-        elsewhere, for example  X&Name Rodeo&,  there are a bunch of problems
-        and errors which may occour during runtime.
+        * User testing
+        * Functional testing
+        * Developer (internal) testing
+
+        All descriptions below, except  "User testing", are only intended for
+        development.
+
+    User testing
+
+        During normal use of the tool, "testing" is only required for hunting
+        problems with the connected target. Following options for tracing and
+        verbosity can be used for that:
+
+      --v
+
+          Print more information about checks.
+
+      --trace
+
+          Print debugging messages.
+          For more details, please see  X&Options for tracing and debugging& .
+
+    Functional testing
+
+        This section describes "developer" rather than "user" testing.
+
+        Functional testing mainly means testing the functionality of the tool
+        itself, for example: do the commands and options work as described in
+        the documentation:  $0 --help
 
         Makefiles are used for testing  functionality and code quality during
         development. These tests are implemented in the  ./t/  directory, see
-        the 'Makefile.*' there.
+        all 'Makefile.*' there, start with 'Makefile.pod'.
+
+    Developer (internal) testing
+
+        Testing SSL/TLS  is a challenging task. Beside the oddities described
+        elsewhere, for example  X&Name Rodeo&,  there are a bunch of problems
+        and errors which may occour during runtime.
 
         Following options and commands for  $0  are available to improve
         testing.  They mainly can simulate error conditions or stop execution
@@ -4474,7 +4606,7 @@ TESTING
           With this option values in the internal  %cfg  hash can be set:
 
               $cfg{KEY} = VALUE
-          
+
           Only (perl) scalars or arrays can be set. The type will be detected
           automatically.
 
@@ -4485,24 +4617,22 @@ TESTING
           or the text used as prefix triggerd by the  --trace  option:
               $0 --cfg-init=prefix_trace="#TRACE: "
 
-      --v
+        The options which provide information about  internal data structures
+        and alike described below, behave like the command  +quit  and do not
+        perform any checks on the target(s).  
+        See 't/Makefile.*' how to use these tests.
 
-          Print more information about checks.
+      --tests
 
-      --trace
-
-          Print debugging messages.
-          For more details, please see  X&Options for tracing and debugging& .
-
-    Internal testing
-
-        Following options and commands for  $0  are for internal testing.
-        They provide informations about internal data structures and alike.
-        See also tests in t/Makefile* .
+          Print overview of following commands/options.
 
       --test-data
 
           Print overview of all available commands and checks.
+
+      --test-maps
+
+          Print internal data strucures '%cfg{openssl}', '%cfg{ssleay}'.
 
       --test-prot
 
@@ -4512,13 +4642,61 @@ TESTING
 
           Print results for applying various texts to defined regex.
 
-      --test-cipher-list
+      --test-ciphers-list
 
           Print list of hex keys of known ciphers.
+
+      --test-ciphers-show
+
+          Print complete list of ciphers.
 
       --test-cipher-sorted
 
           Print list of ciphers sorted according strength.
+
+      --test-ciphers-overview
+
+          Print overview of all available ciphers with all attributes.
+
+      --test-init
+
+          Print parts of the data structure  %cfg. In contrast to the options
+          described above,  --test-init  exits straight before performing the
+          specified commands on the target.  Therefore it prints the settings
+          in  %cfg  containing all applied commands and options.
+
+      --test-methods
+
+          Print available methods for 'openssl' in Net::SSLeay.
+
+      --test-sclient
+
+          Print available options for 'openssl s_client' from Net::SSLeay.
+
+      --test-sslmap
+
+          Print SSL protocols constants from Net::SSLeay.
+
+      --test-ssleay
+
+          Print information about Net::SSLeay capabilities.
+
+      --test-sub
+
+          Obsolete, please use:
+
+              make test.dev.grep.sub
+              make test.dev-grep.subs
+              make test.dev-grep.desc
+
+    Testing results
+
+        Finally there should be tests, which prove that the results of  $0
+        are really what they should be. A test target is necessary therefore,
+        which produces reliable results.
+        However, some of the implemented tests in 't/Makefile.*' (see section
+        "Functional testing" above) already work properly. This test coverage
+        needs to be improved ...
 
 
 EXAMPLES
@@ -4562,12 +4740,6 @@ EXAMPLES
 
         * Test for a specific ciphers
           $0 +cipher --cipher=ADH-AES256-SHA some.tld
-
-        * Test all ciphers, even if not supported by local SSL implementation
-          $0 +cipherraw some.tld
-          $0 +cipherall some.tld
-          $0 +cipherall some.tld --range=full
-          checkAllCiphers.pl example.tld --range=full --v
 
         * Show supported (enabled) ciphers with their DH parameters:
           $0 +cipher-dh some.tld
@@ -4643,7 +4815,7 @@ EXAMPLES
         * Do not read RC-FILE .$0
           $0 +info some.tld --no-rc
 
-        * Show command line argument processing
+        * Show command-line argument processing
           $0 +info some.tld --trace-arg
 
         * Simple tracing
@@ -4718,7 +4890,7 @@ nehcildeihcsretnu eid hcusreV mieb  dnatstne looT  meseid uz eedI eiD
 
 DOCUMENTATION
 
-    User Documentation
+    User documentation
 
         Documentation is mainly intented for the user, which is provided with
 
@@ -4738,23 +4910,37 @@ DOCUMENTATION
 
         This is simply avaiable with:
 
-          o-saft -help="some text"
+          o-saft --help="some text"
 
         In the GUI a more sophisticate search is implemented, see the  "Help"
         window there:
 
           o-saft.tcl
 
-    Developer Documentation
+    Developer documentation
 
         Documentation for developers is provided in various ways. Information
         for developers can be found found in:
 
-        * the files itself
+          * the files itself
 
-        * with:  $0 --help=HELP
+          * with:   $0 --help=test
 
-        * using:  make 
+          * with:   $0 --test
+
+          * reading: Makefile.pod
+
+          * using:  make
+
+          * using:  make help.doc
+
+        Using make for development uses additional external tools and/or Perl
+        modules:
+
+          * perl-analyzer
+            (also requires Perl modules, JSON, Text::MicroTemplate)
+
+          * Debug::Trace Devel::Trace Devel::DProf Devel::NYTProf
 
 
 ATTRIBUTION
@@ -4783,9 +4969,9 @@ VERSION
 
 AUTHOR
 
-        31. July 2012 Achim Hoffmann (at) sicsec de
+        31. July 2012 Achim Hoffmann
 
-        Project Home: https://www.owasp.org/index.php/O-Saft
+        Project Home: https://owasp.org/www-project-o-saft/
 
 
 # TODO must be last section
@@ -4800,7 +4986,6 @@ TODO
           ** support: PCT protocol
           ** Checking fallback from TLS 1.1 to TLS 1.0 (see ssl-cipher-check.pl)
           ** Minimal encryption strength: weak encryption (40-bit) (TestSSLServer.jar)
-          ** check dynamic HTTP Public Key Pinning (HPKP)
 
         * missing checks
           ** SSL_honor_cipher_order => 1
@@ -4846,7 +5031,7 @@ TODO
              Need to check the difference between the  SSL_OP_LEGACY_SERVER_CONNECT  and
              SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION;  see also SSL_clear_options().
              see https://www.openssl.org/docs/ssl/SSL_CTX_set_options.html
-          ** Net::SSLinfo::do_ssl_close()  does not realy work
+          ** Net::SSLinfo::do_ssl_close()  does not really work
 
         * Windows
           ** Unicode:
@@ -4863,12 +5048,12 @@ TODO
              Ugly workaround using --v implemented in o-saft-man.pm only.
 
         * internal
-          ** move all configuration and code for command line arguments to Arg.pm
+          ** move all configuration and code for command-line arguments to Arg.pm
           ** use qr() for defining regex, see $cfg{'regex'}
           ** print_line() has ugly code for legacy=cipher
           ** "Label" texts are defined twice: o-saft.pl and Net::SSLeay
           ** make a clear concept how to handle +CMD whether they report
-             checks or informations (aka %data vs. %check_*)
+             checks or information (a.k.a %data vs. %check_*)
              currently (2016) each single command returns all values
           ** client certificates not yet implemented in _usesocket() _useopenssl(),
              see t.client-cert.txt
