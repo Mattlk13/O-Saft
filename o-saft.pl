@@ -69,7 +69,7 @@ use warnings;
 no warnings 'once';     ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
    # "... used only once: possible typo ..." appears when OTrace.pm not included
 
-our $SID_main   = "@(#) yeast.pl 3.54 24/05/30 19:03:08"; # version of this file
+our $SID_main   = "@(#) yeast.pl 3.75 24/06/26 09:59:47"; # version of this file
 my  $VERSION    = _VERSION();           ## no critic qw(ValuesAndExpressions::RequireConstantVersion)
     # SEE Perl:constant
     # see _VERSION() below for our official version number
@@ -184,7 +184,7 @@ BEGIN {
     # SEE Perl:BEGIN
     # SEE Perl:BEGIN perlcritic
     _trace_info("BEGIN0  - start");
-    sub _VERSION { return "24.01.24"; } # <== our official version number
+    sub _VERSION { return "24.06.24"; } # <== our official version number
         # get official version (used for --help=* and in private modules)
     my $_path = $0;     $_path =~ s#[/\\][^/\\]*$##;
     my $_pwd  = $ENV{PWD} || ".";   # . as fallback if $ENV{PWD} not defined
@@ -253,10 +253,11 @@ sub _tprint { my @txt = @_; printf("#%s: %s\n", $cfg{'me'}, join(" ", @txt)); re
     #? same as OTrace::trace; needed before loading module
 sub _hint   {
     #? print hint message if wanted
-    # don't print if --no-hint given
+    # don't print if --no-hint given; checks for $cfg{'out'}->{'hint_*'} must be done in caller
     # check must be done on ARGV, because $cfg{'out'}->{'hint_info'} may not yet set
     my @txt = @_;
     return if _is_argv('(?:--no.?hint)');
+    return if not _is_cfg_out('hint');
     printf($STR{HINT} . "%s\n", join(" ", @txt));
     return;
 } # _hint
@@ -266,7 +267,9 @@ sub _warn   {
     my @txt = @_;
     my $_no =  "@txt";
        $_no =~ s/^\s*([0-9(]{3}):?.*/$1/smx;   # message number, usually
-    return if _is_argv('(?:--no.?warn(?:ings?)$)'); # ugly hack 'cause we won't pass $cfg{use}{warning}
+    return if _is_argv('(?:--no.?warn(?:ings?)$)'); # ugly hack 'cause we won't always pass $cfg{use}{warning}
+    return if _is_argv('(?:--(?:quiet|silent?)$)'); #
+    return if not _is_cfg_out('warning');
     # other configuration values can be retrieved from %cfg
     if (0 < (grep{/^$_no$/} @{$cfg{out}->{'warnings_no_dups'}})) {
         # SEE  Note:warning-no-duplicates
@@ -415,7 +418,7 @@ our %check_http = %OData::check_http;
 our %check_size = %OData::check_size;
 
 $cfg{'time0'}   = $time0;
-OCfg::set_user_agent("$cfg{'me'}/3.54"); # use version of this file not $VERSION
+OCfg::set_user_agent("$cfg{'me'}/3.75"); # use version of this file not $VERSION
 OCfg::set_user_agent("$cfg{'me'}/$STR{'MAKEVAL'}") if (defined $ENV{'OSAFT_MAKE'});
 # TODO: $STR{'MAKEVAL'} is wrong if not called by internal make targets
 
@@ -1370,7 +1373,7 @@ sub _enable_functions   {
             if ($version_openssl  < 0x01000000) {
                 warn $STR{WARN}, "125: $txo < 1.0.0; $txt_buggysni";
             }
-            _hint("use '--force-openssl' to disable this check");
+            _hint("use '--force-openssl' to disable this check") if (_is_cfg_out('hint_check'));
         }
     }
     trace(" cfg{use}->{sni}= $cfg{'use'}->{'sni'}");
@@ -1384,7 +1387,7 @@ sub _enable_functions   {
             if ($version_openssl  < 0x10002000) {
                 warn $STR{WARN}, "128: $txo < 1.0.2" if ($cfg{'verbose'} > 1);
             }
-            _hint("use '--no-alpn' to disable this check");
+            _hint("use '--no-alpn' to disable this check") if (_is_cfg_out('hint_check'));
         }
     }
     trace(" cfg{use}->{alpn}= $cfg{'use'}->{'alpn'}");
@@ -1397,19 +1400,19 @@ sub _enable_functions   {
             if ($version_openssl  < 0x10001000) {
                 warn $STR{WARN}, "132: $txo < 1.0.1" if ($cfg{'verbose'} > 1);
             }
-            _hint("use '--no-npn' to disable this check");
+            _hint("use '--no-npn' to disable this check") if (_is_cfg_out('hint_check'));
         }
     }
     trace(" cfg{use}->{npn}= $cfg{'use'}->{'npn'}");
 
     if ($cfg{'ssleay'}->{'can_ocsp'} == 0) {    # Net::SSLeay < 1.59  and  OpenSSL 1.0.0
         warn $STR{WARN}, "133: $txt; tests for OCSP disabled";
-        #_hint("use '--no-ocsp' to disable this check");
+        #_hint("use '--no-ocsp' to disable this check") if (_is_cfg_out('hint_check'));
     }
 
     if ($cfg{'ssleay'}->{'can_ecdh'} == 0) {    # Net::SSLeay < 1.56
         warn $STR{WARN}, "134: $txt; setting curves disabled";
-        #_hint("use '--no-cipher-ecdh' to disable this check");
+        #_hint("use '--no-cipher-ecdh' to disable this check") if (_is_cfg_out('hint_check'));
     }
     trace("_enable_functions() }");
     return;
@@ -2659,7 +2662,7 @@ sub _useopenssl     {
 sub _can_connect    {
     # return 1 if host:port can be connected; 0 otherwise
     my ($host, $port, $sni, $timeout, $ssl) = @_;
-    trace("_can_connect($host, $port', $sni, $timeout, $ssl) {");
+    trace("_can_connect($host, $port, $sni, $timeout, $ssl) {");
     if (not defined $sni) { $sni = $STR{UNDEF}; } # defensive programming
     local $? = 0; local $! = undef;
     my $socket;
@@ -2805,6 +2808,7 @@ sub _get_data0      {
 sub _get_cipherslist    {
     #? return array of cipher suites (names or keys) according command-line options
     #  evaluates the --cipher= --cipher-range= option
+    # TODO: ugly code, needs to be redesigned ...
     my $mode    = shift;# 'names' returns array with cipher suite names;
                         # 'keys'  returns array with hex keys of cipher suite names
     my $ssl     = shift;# used for mode=intern only
@@ -2836,8 +2840,9 @@ sub _get_cipherslist    {
     } # --cipher=
     if ($pattern) {
         if (_is_cfg_ciphermode('intern|dump')) {
+            # find names, aliases and constants
             foreach my $name (split(":", $pattern)) {
-                push(@ciphers, Ciphers::find_names($name)); # "" avoids some undef
+                push(@ciphers, Ciphers::find_names_any($name));
             }
         } else { # _is_cfg_ciphermode('openssl')
             # 'intern' is the default cipher range (see o-saft-lib.pm), which
@@ -2858,7 +2863,7 @@ sub _get_cipherslist    {
             }
         }
     } # pattern
-    if (0 >= @ciphers) {        # empty list, check range
+    if (0 >= @ciphers) {        # empty list then check range
         # $range should not be used when --cipher= was given
         # however, if --cipher= did not result in valid ciphers, range is used
         # this slighly differs from documentation in doc/help.txt
@@ -2994,7 +2999,7 @@ sub ciphers_prot_openssl {
             if (0 >= $cfg{'cipher_md5'}) {
                 # Net::SSLeay:SSL supports *MD5 for SSLv2 only
                 # detailled description see OPTION  --no-cipher-md5
-                #_hint("use '--no-cipher-md5' to disable checks with MD5 ciphers");
+                #_hint("use '--no-cipher-md5' to disable checks with MD5 ciphers") if (_is_cfg_out('hint_check'));
                 _vprint("  check cipher (MD5): $ssl:$c\n") if (1 < $cfg{'verbose'});
                 next if (($ssl ne "SSLv2") && ($c =~ m/MD5/));
             }
@@ -3732,7 +3737,7 @@ sub checkciphers    {
     if (defined $results->{'_admin'}{'session_protocol'}) {
         checkciphers_pfs($cnt_all, $cnt_pfs, $results->{'_admin'}{'session_protocol'});
     } else {
-        _hint("no session protocol detected, PFS ciphers may be wrong; consider using '--ciphermode=intern'");
+        _hint("no session protocol detected, PFS ciphers may be wrong; consider using '--ciphermode=intern'"); # if (_is_cfg_out('hint_ciphers'));
         # for ciphermode=openssl|ssleay only; reason not yet identified (12/2023)
     }
     trace("checkciphers() }");
@@ -4791,6 +4796,15 @@ sub checkprot       {
     if (_is_cfg_ssl('TLSv13')) {
         $checks{'hastls13'}->{val}  = " " if ($OCfg::prot{'TLSv13'}->{'cnt'} <= 0);
     }
+    if (_is_cfg_ssl('DTLSv1')) {
+        $checks{'hasdtls1'}->{val}  = " " if ($OCfg::prot{'DTLSv1'}->{'cnt'} <= 0);
+    }
+    if (_is_cfg_ssl('DTLSv12')) {
+        $checks{'hasdtls12'}->{val} = " " if ($OCfg::prot{'DTLSv12'}->{'cnt'} <= 0);
+    }
+    if (_is_cfg_ssl('DTLSv13')) {
+        $checks{'hasdtls13'}->{val} = " " if ($OCfg::prot{'DTLSv13'}->{'cnt'} <= 0);
+    }
 
     # check ALPN and NPN support
     checkalpn($host, $port);    #
@@ -5007,7 +5021,8 @@ EoREQ
     $response =~ s#HTTP/1.. #STATUS: #; # first line is status line, add :
     $response =~ s#(?:\r\n\r\n|\n\n|\r\r).*$##ms;   # remove HTTP body
     trace2("_get_sstp_https: response= #{\n$response\n#}");
-    return "<<empty response>>" if ($response =~ m/^\s*-1/);    # something wrong
+    return "<<empty response -1>>" if ($response =~ m/^\s*-1/);    # something wrong
+    return "<<empty response  1>>" if ($response =~ m/^\s*1\s*$/); # something wrong, 6/2024 seen with wolfSSL
     %headers  = map { split(/:/, $_, 2) } split(/[\r\n]+/, $response);
     # FIXME: map() fails if any header contains [\r\n] (split over more than one line)
     # use elaborated trace with --trace=3 because some servers return strange results
@@ -5377,6 +5392,10 @@ sub print_data      {
             $v  = $k;
             $k  = "";
         }
+        if ($value =~ m/^(Signature Value)(.*)$/i) { # i.e +sigkey_value
+            $k  = "$1 ";# trailng space added for better (human) readability
+            $v  = $2;
+        }
         if ($cfg{'format'} eq "hex") {
             $v =~ s#(..)#$1:#g;
             $v =~ s#:$##;
@@ -5532,7 +5551,8 @@ sub print_cipherline    {
         $bits = sprintf("%3s bits", $bits);
 #        printf("    %s  %s  %s\n", $ssl, $bit, $cipher);
 # TODO: new format 1.11.0
-        printf("Accepted  %s    %s bits  %s\n", $ssl, $bits, $cipher);
+# TODO: new format 2.0.7
+        printf("Accepted  %s    %s  %s\n", $ssl, $bits, $cipher);
     }
     if ($legacy eq 'thcsslcheck') {
         # AES256-SHA - 256 Bits -   supported
@@ -5765,7 +5785,9 @@ sub printciphersummary  {
         print_line($legacy, $host, $port, 'cipher_selected',
                    $data{'cipher_selected'}->{txt}, $OCfg::prot{'cipher_selected'});
     }
-    _hint("consider using '--cipheralpn=, --ciphernpn=,' also") if _is_cfg_verbose();
+    if (_is_cfg_out('hint_ciphers')) {
+        _hint("consider using '--cipheralpn=, --ciphernpn=,' also") if _is_cfg_verbose();
+    }
     trace("printciphersummary() }");
     return;
 } # printciphersummary
@@ -5885,9 +5907,11 @@ sub printciphers        {
     } # $ssl
 
     if ($legacy eq 'sslscan') {
-        my $ssl = ${$cfg{'version'}}[4];
+        my $ssl = ${$cfg{'version'}}[$#{$cfg{'version'}}];
         print_cipherpreferred($legacy, $ssl, $host, $port);
-        # TODO: there is only one $data{'cipher_selected'}
+        # there is only one $data{'cipher_selected'}
+        # it is for the last protocol, usually, hence we extract the last
+        # TODO: need to search the selected one
         #foreach my $ssl (@{$cfg{'version'}}) {
         #    print_cipherpreferred($legacy, $ssl, $host, $port);
         #}
@@ -6460,7 +6484,7 @@ while ($#argv >= 0) {
             if (defined $cfg{'cipherpatterns'}->{$arg}) { # our own aliases are lower case
                 $arg  = $cfg{'cipherpatterns'}->{$arg}[1];
             } else {    # anything else,
-                if ($arg !~ m/^[XxA-Z0-9-]+$/) { # must be upper case
+                if ($arg !~ m/^[XxA-Z0-9_-]+$/) { # must be upper case; _ in constant names
                      # x in RegEx to allow hex keys of ciphers like 0x0300C014
                     _warn("062: given pattern '$arg' for cipher unknown; setting ignored");
                     $arg = "";
@@ -6694,6 +6718,7 @@ while ($#argv >= 0) {
     if ($arg =~ /^[+,](abbr|abk|glossar|todo)$/i)   { $arg = "--help=$1"; }     # for historic reason
     # get matching string right of =
     if ($arg =~ /^(?:--|\+|,)help=?(.*)?$/) {
+        _trace_info("  HELP    - OMan::man_printhelp($arg)");
         # we allow:  --help=SOMETHING  or  +help=SOMETHING
         if (defined $1) {
             $arg = $1 if ($1 !~ /^\s*$/);   # pass bare word, if it was --help=*
@@ -6983,10 +7008,15 @@ while ($#argv >= 0) {
     if ($arg =~ /^--?nodtlsv?11$/i)     { $cfg{'DTLSv11'}   = 0;    }
     if ($arg =~ /^--?nodtlsv?12$/i)     { $cfg{'DTLSv12'}   = 0;    }
     if ($arg =~ /^--?nodtlsv?13$/i)     { $cfg{'DTLSv13'}   = 0;    }
-    if ($arg =~ /^--notcp/i)            { $cfg{$_} = 0 foreach (qw(SSLv2 SSLv3 TLSv1 TLSv11 TLSv12 TLSv13)); }
-    if ($arg =~ /^--tcp/i)              { $cfg{$_} = 1 foreach (qw(SSLv2 SSLv3 TLSv1 TLSv11 TLSv12 TLSv13)); }
-    if ($arg =~ /^--noudp/i)            { $cfg{$_} = 0 foreach (qw(DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13)); }
-    if ($arg =~ /^--udp/i)              { $cfg{$_} = 1 foreach (qw(DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13)); }
+    if ($arg =~ /^--no(?:tcp|tls)$/i)   { $cfg{$_} = 0 foreach (qw(SSLv2 SSLv3 TLSv1 TLSv11 TLSv12 TLSv13)); }
+    if ($arg =~ /^--(?:tcp|tls)$/i)     { $cfg{$_} = 1 foreach (qw(SSLv2 SSLv3 TLSv1 TLSv11 TLSv12 TLSv13)); }
+    if ($arg =~ /^--no(?:udp|dtls)$/i)  { $cfg{$_} = 0 foreach (qw(DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13)); }
+    if ($arg =~ /^--(?:udp|dtls)$/i)    { $cfg{$_} = 1 foreach (qw(DTLSv09 DTLSv1 DTLSv11 DTLSv12 DTLSv13)); }
+    # next 4 just for alias documentation
+    if ($arg eq  '--notcp')             { $arg = '--notls';         } # alias:
+    if ($arg eq  '--noudp')             { $arg = '--nodtls';        } # alias:
+    if ($arg eq  '--tcp')               { $arg = '--tls';           } # alias:
+    if ($arg eq  '--udp')               { $arg = '--dtls';          } # alias:
     # options for +cipher
     if ($arg eq   '-cipher')            { $typ = 'CIPHER_ITEM';     } # openssl
     if ($arg eq  '--cipher')            { $typ = 'CIPHER_ITEM';     }
@@ -7024,14 +7054,33 @@ while ($#argv >= 0) {
     if ($arg eq  '--nodisabled')        { _set_cfg_out('disabled',    0); }
     if ($arg =~ /^--headers?$/)         { _set_cfg_out('header',      1); } # some people type --headers
     if ($arg =~ /^--noheaders?$/)       { _set_cfg_out('header',      0); }
-    if ($arg =~ /^--hints?$/)           { _set_cfg_out('hint_info',   1); _set_cfg_out('hint_check', 1); }
-    if ($arg =~ /^--nohints?$/)         { _set_cfg_out('hint_info',   0); _set_cfg_out('hint_check', 0); }
     if ($arg =~ /^--hints?infos?/)      { _set_cfg_out('hint_info',   1); }
     if ($arg =~ /^--nohints?infos?/)    { _set_cfg_out('hint_info',   0); }
     if ($arg =~ /^--hints?checks?/)     { _set_cfg_out('hint_check',  1); }
     if ($arg =~ /^--nohints?checks?/)   { _set_cfg_out('hint_check',  0); }
     if ($arg =~ /^--hints?cipher/)      { _set_cfg_out('hint_cipher', 1); }
     if ($arg =~ /^--nohints?cipher/)    { _set_cfg_out('hint_cipher', 0); }
+    if ($arg =~ /^--hints?$/)           {
+        _set_cfg_out('hint',        1);
+        _set_cfg_out('hint_info',   1);
+        _set_cfg_out('hint_check',  1); 
+        _set_cfg_out('hint_cipher', 1); 
+    }
+    if ($arg =~ /^--nohints?$/)         {
+        _set_cfg_out('hint',        0);
+        _set_cfg_out('hint_info',   0);
+        _set_cfg_out('hint_check',  0);
+        _set_cfg_out('hint_cipher', 0); 
+    }
+    if ($arg eq  '--quiet')             { $arg = '--silent';              } # alias:
+    if ($arg eq  '--silent')            { } # see next line
+    if ($arg =~ /^--(?:silent|quiet)$/) {
+        _set_cfg_out('warning',     0);
+        _set_cfg_out('hint',        0);
+        _set_cfg_out('hint_info',   0);
+        _set_cfg_out('hint_check',  0);
+        _set_cfg_out('hint_cipher', 0);
+    }
     if ($arg =~ /^--showhosts?/i)       { _set_cfg_out('hostname',    1); }
     if ($arg eq  '--score')             { _set_cfg_out('score',       1); }
     if ($arg eq  '--noscore')           { _set_cfg_out('score',       0); }
@@ -7207,7 +7256,7 @@ while ($#argv >= 0) {
     if ($arg eq  '+sts')                { $arg = '+hsts';           } # alias:
     if ($arg eq  '+sigkey')             { $arg = '+sigdump';        } # alias:
     if ($arg =~ /^\+sigkey$p?algorithm/i){$arg = '+signame';        } # alias:
-    if ($arg eq  '+protocol')           { $arg = '+session_protocol'; } # alias:
+    if ($arg eq  '+protocol')           { $arg = '+session_protocol'; } # alias: # NOTE different to +protocols
     if ($arg =~ /^\+selected$p?protocol/i){$arg= '+session_protocol'; } # alias:
     if ($arg =~ /^\+rfc$p?2818$/i)      { $arg = '+rfc_2818_names'; } # alias:
     if ($arg =~ /^\+rfc$p?2818$p?names/i){$arg = '+rfc_2818_names'; } # alias:
@@ -7300,7 +7349,9 @@ while ($#argv >= 0) {
             push(@{$cfg{'do'}}, lc($val));      # lc() as only lower case keys are allowed since 14.10.13
         } else {
             _warn("049: command '$val' unknown; command ignored");
-            _hint($cfg{'hints'}->{'cipher'}) if ($val =~ m/^cipher(?:all|raw)/);
+            if (_is_cfg_out('hint_cipher')) {   # SEE Note:hints
+                _hint($cfg{'hints'}->{$val}) if ($val =~ m/^cipher(?:all|raw)/);
+            }
         }
         next;
     }
@@ -7366,6 +7417,7 @@ local $\ = "\n";
 # TODO: use cfg{'targets'} for proxy
 if ($cfg{'proxyhost'} ne "" && 0 == $cfg{'proxyport'}) {
     my $q = "'";
+    _trace_info("  USAGE   -");
     printusage_exit("$q--proxyhost=$cfg{'proxyhost'}$q requires also '--proxyport=NN'");
 }
 $verbose = $cfg{'verbose'};
@@ -7376,7 +7428,6 @@ if (_is_cfg_do('cipher') and (0 == $#{$cfg{'do'}})) {
     $cfg{'use'}->{'https'}  = 0;
     $cfg{'use'}->{'http'}   = 0;
     $cfg{'use'}->{'dns'}    = 0;
-    _hint($cfg{'hints'}->{'cipher'});
 }
 
 if (_is_cfg_do('list')) {
@@ -7511,9 +7562,10 @@ if ((0 < _need_cipher()) or (0 < _need_default())) {
             # add: cipher_intern, cipher_openssl, cipher_ssleay, cipher_dump
             my $do = 'cipher_' . $mode;
             push(@{$cfg{'do'}}, $do) if (not _is_cfg_do($do)); # only if not yet set
-            # TODO: funktioniert nicht sauber
+            # TODO: funktioniert nicht sauber; OWASP-Rating fehlt bei modernen ECDHE-ECDSA-*
             #$cfg{'legacy'} = 'owasp' if ($do eq 'cipher_intern'); # new default
             #$legacy = $cfg{'legacy'};
+            #_hint("+cipher : functionality changed, please see '$cfg{'me'} --help=TECHNIC'") if (_is_cfg_out('hint_ciphers'));
         }
     }
 }
@@ -7774,6 +7826,7 @@ if ($fail > 0) {
         # contain a list of commands. So the hint is a bit vage.
 } else {
     # print warnings and hints if necessary
+    # don't bother user with hints defined for commands in @{$cfg{'commands_hint'}}
     foreach my $cmd (@{$cfg{'do'}}) {
         if (_is_member($cmd, \@{$cfg{'commands_hint'}})) {
             _hint("+$cmd : please see '$cfg{'me'} --help=CHECKS' for more information");
@@ -9461,7 +9514,7 @@ They can be printed immediately (without being specified in `$cfg{hints}':
 
 It is not recommended to use:
 
-    print $STR[HINT}, "my text";
+    print $STR{HINT}, "my text";
 
 
 =head2 Note:tty

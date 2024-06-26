@@ -1,0 +1,119 @@
+#!/usr/bin/make -rRf
+#?
+#? NAME
+#?      Makefile.testssl.libressl - additional settings for Makefile.testssl
+#?
+#? DESCRIPTION
+#?      This Makefile contains addition settings for Makefile.testssl.
+#?      For a detailed description, please see there or use:
+#?          make -f Makefile.testssl help
+#?
+#? SYNOPSIS
+#?      include Makefile.testssl.libressl
+#?
+#? VERSION
+#?      @(#) Makefile.testssl.libressl 1.9 24/06/09 13:44:02
+#?
+#? AUTHOR
+#?      04-jun-24 Achim Hoffmann
+#?
+# -----------------------------------------------------------------------------
+
+_SID.testssl.libressl  := 1.9
+#_MYSELF                := $(firstword $(MAKEFILE_LIST))
+
+#_____________________________________________________________________________
+#_____________________________________ global variables for image and build __|
+
+libressl-%:     TESTSSL.vm.version      = Makefile.testssl.libressl 1.9
+libressl-%:     TESTSSL.vm.type         = libressl
+libressl-%:     TESTSSL.vm.port         = 5443
+libressl-%:     TESTSSL.vm.client       = openssl
+libressl-%:     TESTSSL.vm.client.help  = s_client help
+libressl-%:     TESTSSL.vm.server.help  = s_server help
+libressl-%:     TESTSSL.vm.server.dtls  = openssl s_server -dtls -key $(TESTSSL.vm.server.key) -cert $(TESTSSL.vm.server.cert)
+libressl-%:     TESTSSL.vm.server.tls   = openssl
+libressl-%:     TESTSSL.vm.server.args  = s_server -accept $(TESTSSL.vm.port) -WWW -www -key $(TESTSSL.vm.server.key) -cert $(TESTSSL.vm.server.cert)
+# TODO: s_server -servername $(TESTSSL.vm.hostname)
+# TODO: s_server -tls1_2 -tls1_3  # are both together possible?
+libressl-%:     TESTSSL.src.packages    = $(TESTSSL.default.apk)
+libressl-%:     TESTSSL.src.configure  += $(TESTSSL.src.configure.libressl)
+libressl-%:     TESTSSL.src.install    += $(TESTSSL.src.install.libressl)
+
+#_____________________________________________________________________________
+#__________________________________________ variables for sources and build __|
+
+TESTSSL.src.tar.libressl-3.9.2  = libressl-3.9.2.tar.gz
+TESTSSL.src.sha.libressl-3.9.2  = e2397fd72dd3d213985a6309cd75de5c945bd035
+TESTSSL.src.pgp.libressl-3.9.2  =
+TESTSSL.src.git.libressl-3.9.2  = 
+TESTSSL.src.url.libressl-3.9.2  = https://github.com/libressl/portable/releases/download/v3.9.2/libressl-3.9.2.tar.gz
+
+TESTSSL.src.tar.libressl-3.8.4  = libressl-3.8.4.tar.gz
+TESTSSL.src.sha.libressl-3.8.4  = 87fa0a43cf651e2ad58a56745fe9a486bbcddad2
+TESTSSL.src.pgp.libressl-3.8.4  = https://github.com/libressl/portable/releases/download/v3.9.2/libressl-3.9.2.tar.gz.asc
+TESTSSL.src.git.libressl-3.8.4  = 
+TESTSSL.src.url.libressl-3.8.4  = https://github.com/libressl/portable/releases/download/v3.8.4/libressl-3.8.4.tar.gz
+#  .pgp. not yet used
+
+TESTSSL.src.tar.libressl-3.8.3  = libressl-3.8.3.tar.gz
+TESTSSL.src.sha.libressl-3.8.3  = 9d39cd629255863689a5b9caab7b96f898119edf
+TESTSSL.src.pgp.libressl-3.8.3  =
+TESTSSL.src.git.libressl-3.8.3  = 
+TESTSSL.src.url.libressl-3.8.3  = https://github.com/libressl/portable/releases/download/v3.8.3/libressl-3.8.3.tar.gz
+
+# define settings for "make build install"; they are used herein only
+TESTSSL.src.configure.libressl  =\
+	--enable-static --disable-option-checking --disable-tests --enable-nc
+
+TESTSSL.src.install.libressl    =\
+	apps/ocspcheck/ocspcheck \
+	apps/openssl/openssl     \
+	apps/nc/nc               \
+	ssl/.libs/lib*.a         \
+	ssl/.libs/lib*.so*       \
+	tls/.libs/lib*.a         \
+	tls/.libs/lib*.so*       \
+	crypto/.libs/lib*.a      \
+	crypto/.libs/lib*.so*
+
+#_____________________________________________________________________________
+#______________________________________ variables with commands for targets __|
+
+# sometimes ./autogen.sh does not exist, call is if available only
+TESTSSL.vm.build.compile.libressl = \
+	test -x ./autogen.sh && ./autogen.sh || true && \\ $(_NL)\
+	./configure $(TESTSSL.src.configure)         && \\ $(_NL)\
+	make
+
+# TODO: starting liberssl's openssl fails with following error:
+#    Error configuring OpenSSL
+#    140300147796776:error:0EFFF071:configuration file \
+#       routines:CRYPTO_internal:unknown \
+#       module name:conf/conf_mod.c:196:module=providers
+# this happens even we've istalled openssl.cnf, but it seems to be incomplete
+# as workaround (6/2024) we use the environment variable OPENSSL_CONF  set to
+# the installed $(TESTSSL.default.bin)/ssl/openssl.cnf
+# openssl seems to be happy with that
+TESTSSL.vm.build.install.libressl = \
+	mv $(TESTSSL.src.install.libressl) $(TESTSSL.default.bin)/ && \\ $(_NL)\
+	mv openssl.cnf    $(TESTSSL.default.bin)/    && \\ $(_NL)\
+	export OPENSSL_CONF=$(TESTSSL.default.bin)/openssl.cnf && \\ $(_NL)\
+	$(TESTSSL.default.bin)/openssl req -x509 -newkey rsa:4096 \\ $(_NL)\
+	    -keyout $(TESTSSL.vm.server.key) -out $(TESTSSL.vm.server.cert) \\ $(_NL)\
+	    -sha256 -days 3650 -nodes -subj \\ $(_NL)\
+	    "/C=DE/ST=stateless/L=here/O=TESTSSL/OU=none/CN=127.0.0.1"
+
+TESTSSL.vm.build.testing.libressl = \
+	echo -n '\# number of ciphers $(TESTSSL.vm.client)):' ; \\ $(_NL)\
+	$(TESTSSL.vm.client) ciphers ALL:eNULL:kNULL |tr ':' ' ' | wc -w ; \\ $(_NL)\
+	$(TESTSSL.vm.client) ciphers ALL:eNULL:kNULL
+
+TESTSSL.vm.build.cleanup.libressl = true
+
+#_____________________________________________________________________________
+#________________________________________ private targets, not fully tested __|
+
+# NOTE: only pattern rules are allowed, the first explizit target will become
+# the first target in the parent too, usually not wanted ...
+

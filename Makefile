@@ -21,14 +21,14 @@
 #       For the public available targets see below of  "well known targets" .
 #?
 #? VERSION
-#?      @(#) Makefile 3.25 24/05/31 12:19:18
+#?      @(#) Makefile 3.31 24/06/22 19:54:44
 #?
 #? AUTHOR
 #?      21-dec-12 Achim Hoffmann
 #?
 # -----------------------------------------------------------------------------
 
-_SID            = 3.25
+_SID            = 3.31
                 # define our own SID as variable, if needed ...
                 # SEE O-Saft:Makefile Version String
                 # Known variables herein (8/2019) to be changed are:
@@ -148,8 +148,7 @@ SRC.usr.misc    = \
 		  install_openssl.sh \
 		  install_perl_modules.pl \
 		  INSTALL-template.sh \
-		  Dockerfile.alpine-3.6 \
-		  Dockerfile.mbedtls
+		  Dockerfile.alpine-3.6
 
 SRC.usr.zap     = zap_config.sh zap_config.xml
 # some file should get the $(O-Project) suffix, which is appended later
@@ -186,6 +185,15 @@ TEST.Makefiles   = \
 		  Makefile.critic  Makefile.dev   Makefile.etc   Makefile.template \
 		  Makefile.docker  Makefile.FQDN  Makefile.examples
 SRC.Makefiles   = $(TEST.Makefiles:%=$(TEST.dir)/%)
+
+# Makefiles not used directly by O-Project; only added to ALL.tgz
+TEST.Makefiles.ssl = \
+		  Makefile.testssl \
+		  Makefile.testssl.botan \
+		  Makefile.testssl.mbedtls \
+		  Makefile.testssl.libressl \
+		  Makefile.testssl.wolfssl
+SRC.Makefiles.ssl  = $(TEST.Makefiles.ssl:%=$(TEST.dir)/%)
 
 # documentation files
 O-DOC.odg       = o-saft_CLI_data_flow.odg \
@@ -245,6 +253,12 @@ O-DIRS          = $(O-LIB.dir) $(O-DOC.dir) $(O-WEB.dir) $(O-USR.dir) $(TEST.dir
 GEN.docs        = $(GEN.pod) $(GEN.html) $(GEN.cgi.html) $(GEN.text) $(GEN.wiki) $(GEN.man) $(GEN.DOC.data)
 # NOTE: sequence in ALL.Makefiles is important, for example when used in target doc
 ALL.Makefiles   = $(SRC.make) $(SRC.Makefiles)
+ALL.devfiles    = \
+		  $(SRC.misc) \
+		  $(SRC.test) \
+		  $(SRC.make) \
+		  $(SRC.Makefiles) \
+		  $(SRC.Makefiles.ssl)
 ALL.osaft       = $(SRC.pl)  $(SRC.gui) $(SRC.pm)  $(SRC.sh) $(O-SRC.txt) $(SRC.rc) $(SRC.docker)
 ALL.exe         = $(SRC.exe) $(SRC.cgi) $(SRC.php) $(GEN.src) $(SRC.docker)
 ALL.tst         = $(SRC.test)
@@ -272,6 +286,7 @@ ALL.src         = \
 		  $(ALL.usr)
 ALL.tgz         = $(ALL.src:%=$(O-TGZ.dir)/%)
 ALL.tgz        += $(O-TGZ.dir)/$(GEN.inst) $(O-TGZ.dir)/$(GEN.rel)
+ALL.tgz        += $(SRC.Makefiles.ssl:%=$(O-TGZ.dir)/%)
 
 # internal used make
 MAKE            = $(MAKE_COMMAND)
@@ -306,19 +321,23 @@ _INST.osaft_cgi = $(sort $(SRC.cgi) $(SRC.php) $(GEN.cgi.html))
 _INST.osaft_doc = $(sort $(GEN.pod) $(GEN.man) $(GEN.html))
 _INST.usr       = $(sort $(ALL.usr))
 _INST.osaft     = $(sort $(ALL.osaft))
+_INST.devfiles  = $(sort $(ALL.devfiles))
 _INST.devtools  = $(sort $(ALL.devtools))
 _INST.tools_int = $(sort $(_ALL.devtools.intern))
 _INST.tools_ext = $(sort $(_ALL.devtools.extern))
 _INST.tools_opt = $(sort $(ALL.tools.optional))
 _INST.tools_other = $(sort $(ALL.tools.ssl))
 _INST.devmodules= $(sort $(ALL.devmodules))
-_INST.genbytext = generated data by Makefile 3.25 from $(SRC.inst)
-_INST.gen_text  = generated data from Makefile 3.25
+_INST.genbytext = generated data by Makefile 3.31 from $(SRC.inst)
+_INST.gen_text  = generated data from Makefile 3.31
 EXE.install = sed -e 's@INSERTED_BY_MAKE_INSTALLDIR@$(O-INSTALL.dir)@'       \
 		  -e 's@INSERTED_BY_MAKE_DOC_DIR@$(O-DOC.dir)@'              \
 		  -e 's@INSERTED_BY_MAKE_LIB_DIR@$(O-LIB.dir)@'              \
 		  -e 's@INSERTED_BY_MAKE_USR_DIR@$(O-USR.dir)@'              \
+		  -e 's@INSERTED_BY_MAKE_TST_DIR@$(TEST.dir)@'               \
+		  -e 's@INSERTED_BY_MAKE_LOG_DIR@$(TEST.logdir)@'            \
 		  -e 's@INSERTED_BY_MAKE_CONTRIB@$(_INST.usr)@'              \
+		  -e 's@INSERTED_BY_MAKE_DEV_FILES@$(_INST.devfiles)@'       \
 		  -e 's@INSERTED_BY_MAKE_TOOLS_OTHER@$(_INST.tools_other)@'  \
 		  -e 's@INSERTED_BY_MAKE_TOOLS_OPT@$(_INST.tools_opt)@'      \
 		  -e 's@INSERTED_BY_MAKE_DEVTOOLSINT@$(_INST.tools_int)@'    \
@@ -585,8 +604,8 @@ docs:       $(GEN.docs)
 standalone: $(GEN.src)
 stand-alone:$(GEN.src)
 tar:        $(GEN.tgz)
-_INST.is_edit           = 3.25
-tar:     _INST.is_edit  = 3.25
+_INST.is_edit           = 3.31
+tar:     _INST.is_edit  = 3.31
 tmptar:  _INST.is_edit  = something which hopefully does not exist in the file
 tmptar:     $(GEN.tmptgz)
 tmptgz:     $(GEN.tmptgz)
@@ -664,10 +683,12 @@ $(O-TMP.dir)/$(O-LIB.dir) $(O-TMP.dir)/$(O-DOC.dir) $(O-TMP.dir)/$(O-USR.dir) $(
 	mkdir -p $@
 
 # cp fails if SRC.pl is read-only, hence we remove it; it is generated anyway
+# target does nothing if $(DEV.pl) does not exist
 $(SRC.pl): $(DEV.pl)
 	@$(TRACE.target)
-	rm -f $@
-	cp $< $@
+	test -f $(DEV.pl) && rm -f $@ || true
+	test -f $(DEV.pl) && cp $< $@ || touch $@
+	test -s $(SRC.pl)
 
 # generation fails if GEN.src is read-only, hence we remove it; it is generated anyway
 $(GEN.src):  $(EXE.single) $(SRC.pl) $(ALL.pm)
@@ -716,7 +737,7 @@ $(GEN.tgz)--to-noisy: $(ALL.src)
 # TODO: this is a dirty hack, because no Makefiles from t/ should be used here
 # most files could also be generated with: $(SRC.pl) --gen-docs
 # SEE GNU Make:Pattern Rule
-$(O-DOC.dir)/$(SRC.pl).%warnings: Makefile $(SRC.pl) $(SRC.pm) $(TEST.dir)/Makefile.warnings
+$(O-DOC.dir)/$(SRC.pl).%warnings: Makefile $(SRC.pl) $(SRC.pm) $(SRC.cgi) $(TEST.dir)/Makefile.warnings
 	@$(TRACE.target)
 	$(MAKE_COMMAND) -s warnings-info > $@
 

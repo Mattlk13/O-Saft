@@ -25,8 +25,8 @@ use warnings;
 use Carp;
 our @CARP_NOT   = qw(Ciphers); # TODO: funktioniert nicht
 
-my  $SID_ciphers= "@(#) Ciphers.pm 3.27 24/05/30 17:10:06";
-our $VERSION    = "24.01.24";   # official verion number of this file
+my  $SID_ciphers= "@(#) Ciphers.pm 3.38 24/06/24 15:26:36";
+our $VERSION    = "24.06.24";   # official verion number of this file
 
 #_____________________________________________________________________________
 #___________________________________________________ package initialisation __|
@@ -329,6 +329,7 @@ our @cipher_iana_recomended =
 *_trace2  = sub { print(join(" ", "#${0}::",    @_), "\n") if (2 < $OCfg::cfg{'trace'});   return; } if not defined &_trace2;
 *_v_print = sub { print(join(" ", "#${0}: ",    @_), "\n") if (0 < $OCfg::cfg{'verbose'}); return; } if not defined &_v_print;
 *_v2print = sub { print(join(" ", "#${0}: ",    @_), "\n") if (1 < $OCfg::cfg{'verbose'}); return; } if not defined &_v2print;
+    # TODO: \n in print() above wrong if called stand-alone
 
 #_____________________________________________________________________________
 #__________________________________________________________________ methods __|
@@ -628,6 +629,10 @@ Returns space-separetd string or array depending on calling context.
 Get list of all defined cipher suite names in C<%ciphers>.
 Returns space-separetd string or array depending on calling context.
 
+=head3 find_consts()
+
+Find all matching constants for given cipher constant (pattern).
+
 =head3 find_names( $cipher_pattern)
 
 Find all matching cipher names for given cipher name (pattern).
@@ -635,6 +640,14 @@ Find all matching cipher names for given cipher name (pattern).
 =head3 find_keys( $cipher_pattern)
 
 Find all matching hex keys for given cipher name (pattern).
+
+=head3 find_keys_any( $cipher_pattern)
+
+Return keys for all matching hex keys, cipher names, aliases or constants.
+
+=head3 find_names_any( $cipher_pattern)
+
+Return cipher names for all matching hex keys, cipher names, aliases or constants.
 
 =head3 find_name( $cipher)
 
@@ -647,21 +660,33 @@ sub get_key     {
     my $txt = shift;
     my $key = uc($txt);
        $key =~ s/X/x/g; # 0X... -> 0x...
-    return $key if defined $ciphers{$key};  # cipher's hex key itself
-    foreach my $key (keys %ciphers) {
-        my @names = get_names($key);
-        return $key if (0 < (grep{/^$txt$/i} @names));
-            # TODO above grep my return "Use of uninitialized value $_"
-            #      if the passed key is not found in @names
+    my $typ = 'key';
+    # ah: too noisy here# _trace("get_key($txt)");
+    TRY: {
+        last TRY if defined $ciphers{$key}; # cipher's hex key itself
+        $typ = 'names';
+        # Perl dragon: foreach's variable is localized to the loop, hence $_
+        foreach $_ (keys %ciphers) { ## no critic qw(Variables::RequireLexicalLoopIterators)
+            $key = $_;
+            my @names = get_names($key);    # returns aliases too
+            last TRY if (0 < (grep{/^$txt$/i} @names));
+                # TODO above grep my return "Use of uninitialized value $_"
+                #      if the passed key is not found in @names
+        }
+        # any other text, try to normalise ...  # example:  SSL_CK_NULL_WITH_MD5
+        $typ = 'const';
+        $txt =~ s/^(?:SSL[23]?|TLS1?)_//;   # strip any prefix: CK_NULL_WITH_MD5 
+        $txt =~ s/^(?:CK|TXT)_//;           # strip any prefix: NULL_WITH_MD5
+        foreach $_ (keys %ciphers) { ## no critic qw(Variables::RequireLexicalLoopIterators)
+            $key = $_;
+            my @names = get_consts($key);
+            last TRY if (0 < (grep{/^$txt$/i} @names));
+        }
+        $typ = 'no key found';
     }
-    # any other text, try to normalise ...      # example:  SSL_CK_NULL_WITH_MD5
-    $txt =~ s/^(?:SSL[23]?|TLS1?)_//;   # strip any prefix: CK_NULL_WITH_MD5 
-    $txt =~ s/^(?:CK|TXT)_//;           # strip any prefix: NULL_WITH_MD5
-    foreach my $key (keys %ciphers) {
-        my @names = get_const($key);
-        return $key if (0 < (grep{/^$txt$/i} @names));
-    }
-    _warn("521: no key found for '$txt'");  # most likely a programming error %cfg or <DATA> herein
+    # ah: too noisy here# _trace("get_key: found '$txt' in %cipher{$typ}");
+    return $key if ($typ !~ /^no key/);
+    _warn("521: $typ for '$txt'");  # most likely a programming error %cfg or <DATA> herein
     return '';
 } # get_key
 
@@ -730,6 +755,21 @@ sub find_keys   {
     return map({get_key($_);} grep{/$pattern/} get_names_list());
 } # find_keys
 
+sub find_consts {
+    #? find all constants of cipher suite for which given cipher pattern matches in %ciphers
+    # NOTE: matches the primary cipher suite name only, not aliases or constants
+    my $pattern =  shift;
+       $pattern =~ s/:/|/g;
+    my @list;
+    _trace("find_consts($pattern)");
+    foreach my $key (sort keys %ciphers) {
+        my @const = grep{/$pattern/} get_consts($key);
+        next if not @const;
+        push(@list, @const);
+    }
+    return @list;
+} # find_consts
+
 sub find_names  {
     #? find all cipher suite names for which given cipher pattern matches in %ciphers
     #? pattern can be RegEx like GCM|CHACHA or OpenSSL-style pattern like GCM:CHACHA
@@ -739,6 +779,39 @@ sub find_names  {
     _trace("find_names($pattern)");
     return grep{/$pattern/} get_names_list();
 } # find_names
+
+sub find_keys_any   {
+    #? find all cipher suite keys for which given cipher pattern matches, key or name or alias or constant
+    my $pattern =  shift;
+       $pattern =~ s/:/|/g;
+    my @list;
+    _trace("find_keys_any: search $pattern");
+    # should match below: my $key = get_key($pattern);
+    foreach my $key (sort keys %ciphers) {
+        next if $key =~ m/^\s*$/;
+        if ($key =~ m/$pattern/) {
+            push(@list, $key);
+            next;
+        }
+        # get name and all aliases
+        my  @names = grep{/$pattern/} get_names($key);
+        if (@names) {   push(@list, $key);  next; }
+        # get constants
+            @names = grep{/$pattern/} get_consts($key);
+        if (@names) {   push(@list, $key);  next; }
+    }
+    return @list;
+} # find_keys_any
+
+sub find_names_any  {
+    #? find all cipher suite names for which given cipher pattern matches, key or name or constant
+    my $pattern =  shift;
+       $pattern =~ s/:/|/g;
+    my @list;
+    foreach my $key (find_keys_any($pattern)) { push(@list, get_name($key)); }
+    return wantarray ? (@list) : join(' ', (sort @list));
+    return @list;
+} # find_names_any
 
 sub find_name   {
     #? TODO  check if given cipher name is a known cipher
@@ -1054,12 +1127,12 @@ sub show_getter     {
     printf("%-10s(%s)\t%s\t%s\n", "get_sec",   $key, "sec",   get_sec(  $key) );
     printf("%-10s(%s)\t%s\t%s\n", "get_ssl",   $key, "ssl",   get_ssl(  $key) );
     printf("%-10s(%s)\t%s\t%s\n", "get_name",  $key, "name",  get_name( $key) );
-    printf("%-10s(%s)\t%s\t%s\n", "get_names", $key, "names",     scalar(get_names($key)) );
-    printf("%-10s(%s)\t%s\t%s\n", "get_aliases", $key, "aliases", scalar(get_aliases($key))||"" ); # "" to avoid perl warning if there are no aliases
+    printf("%-10s(%s)\t%s\t%s\n", "get_names", $key, "names", join(" ", get_names($key)) );
+    printf("%-10s(%s)\t%s\t%s\n", "get_aliases", $key, "aliases", join(" ", get_aliases($key)) );
     printf("%-10s(%s)\t%s\t%s\n", "get_const", $key, "const", get_const($key) );
-    printf("%-10s(%s)\t%s\t%s\n", "get_consts", $key, "consts",   scalar(get_consts($key)) );
+    printf("%-10s(%s)\t%s\t%s\n", "get_consts", $key, "consts",   join(" ", get_consts($key)) );
     printf("%-10s(%s)\t%s\t%s\n", "get_note",  $key, "note",  get_note( $key) );
-    printf("%-10s(%s)\t%s\t%s\n", "get_notes", $key, "notes", get_notes($key) );
+    printf("%-10s(%s)\t%s\t%s\n", "get_notes", $key, "notes", join("", get_notes($key)) );
     printf("%-10s(%s)\t%s\t%s\n", "get_iana",  $key, "iana",  get_iana( $key) );
     printf("%-10s(%s)\t%s\t%s\n", "get_pfs",   $key, "pfs",   get_iana( $key) );
     printf("%-10s(%s)\t%s\t%s\n", "get_encsize",$key, "encsize", get_encsize( $key) );
@@ -1495,8 +1568,11 @@ sub show            {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     print get_pfs($1)       if ($arg =~ m/^(?:get.)?pfs=(.*)/   );
     print find_name($1)     if ($arg =~ m/^find.?name=(.*)/     );
     # enforce string value for returned arrays
+    print join(" ", find_names_any($1)) if ($arg =~ m/^find.?names.?any=(.*)/);
+    print join(" ", find_keys_any($1))  if ($arg =~ m/^find.?keys.?any=(.*)/ );
     print join(" ", find_names($1))     if ($arg =~ m/^find.?names=(.*)/     );
     print join(" ", find_keys($1))      if ($arg =~ m/^find.?keys=(.*)/      );
+    print join(" ", find_consts($1))    if ($arg =~ m/^find.?consts=(.*)/    );
     print join(" ", get_names($1))      if ($arg =~ m/^(?:get.)?names=(.*)/  );
     print join(" ", get_aliases($1))    if ($arg =~ m/^(?:get.)?aliases=(.*)/);
     print join(" ", get_consts($1))     if ($arg =~ m/^(?:get.)?consts=(.*)/ );
@@ -1606,6 +1682,7 @@ sub _main   {
         if ($arg =~ m/^--?h(?:elp)?$/)  { OText::print_pod($0, __FILE__, $SID_ciphers); exit 0; }
         if ($arg eq '--usage')          { OText::usage_show("", \%usage); exit 0; }
         # ----------------------------- options
+        if ($arg eq '--trace')          { $OCfg::cfg{'trace'}++;   next; }
         if ($arg eq '--v')              { $OCfg::cfg{'verbose'}++; next; }
         # ----------------------------- commands
         if ($arg =~ /^version$/)        { print "$SID_ciphers\n";  next; }
@@ -1744,7 +1821,7 @@ purpose of this module is defining variables. Hence we export them.
 
 =head1 VERSION
 
-3.27 2024/05/30
+3.38 2024/06/24
 
 
 =head1 AUTHOR
@@ -1808,6 +1885,7 @@ __DATA__
 # hex const	openssl	sec	ssl	keyx	auth	enc	bits	mac	rfc	cipher,aliases	const	comment
 #--------------+-------+-------+-------+-------+-------+-------+-------+-------+-------+---------------+-------+---------------+
 0x03005600	-	None	SSL/TLS	None	None	-	0	None	7507	SCSV,TLS_FALLBACK_SCSV	TLS_FALLBACK_SCSV	SCSV
+0x030000FE	-	-?-	TLSv13	None	None	-	-?-	SHA256	-	WDM-NULL-SHA256	WDM_WITH_NULL_SHA256	wolfSSL DTLS Multicast
 0x030000FF	-	None	SSL/TLS	None	None	-	0	None	5746	INFO_SCSV	EMPTY_RENEGOTIATION_INFO_SCSV	DOC
 0x03000A0A	-	-	TLSv13	None	None	-	0	None	8701	GREASE-0A	GREASE_0A	-
 0x03001A1A	-	-	TLSv13	None	None	-	0	None	8701	GREASE-1A	GREASE_1A	-
@@ -2214,8 +2292,8 @@ __DATA__
 0x0300C0B1	-?-	-?-	TLSv12	ECCPWD	RSA	AESGCM	256	AEAD	8492	ECCPWD-AES256-GCM-SHA384	ECCPWD_WITH_AES_256_GCM_SHA384	R
 0x0300C0B2	-?-	-?-	TLSv12	ECCPWD	RSA	AESCCM	128	AEAD	8492	ECCPWD-AES128-CCM-SHA384	ECCPWD_WITH_AES_128_CCM_SHA384	R
 0x0300C0B3	-?-	-?-	TLSv12	ECCPWD	RSA	AESCCM	256	AEAD	8492	ECCPWD-AES256-CCM-SHA384	ECCPWD_WITH_AES_256_CCM_SHA384	R
-0x0300C0B4	-?-	-?-	TLSv13	-?-	-?-	-?-	-?-	SHA256	9150	SHA256-SHA256	SHA256_SHA256	-
-0x0300C0B5	-?-	-?-	TLSv13	-?-	-?-	-?-	-?-	SHA384	9150	SHA384-SHA384	SHA384_SHA384	-
+0x0300C0B4	-?-	-?-	TLSv13	-?-	-?-	-?-	-?-	SHA256	9150	SHA256-SHA256,TLS13-SHA256-SHA256	SHA256_SHA256	-
+0x0300C0B5	-?-	-?-	TLSv13	-?-	-?-	-?-	-?-	SHA384	9150	SHA384-SHA384,TLS13-SHA384-SHA384	SHA384_SHA384	-
 0x0300C100	HIGH	HIGH	TLSv12	DH	GOST	Kuznyechik	256	Kuznyechik	9189	GOSTR341112_256_WITH_KUZNYECHIK_CTR_OMAC	GOSTR341112_256_WITH_KUZNYECHIK_CTR_OMAC	-
 0x0300C101	HIGH	HIGH	TLSv12	DH	GOST	Magma	256	Magma	9189	GOSTR341112_256_WITH_MAGMA_CTR_OMAC,CTR-OMAC	GOSTR341112_256_WITH_MAGMA_CTR_OMAC	-
 0x0300C102	HIGH	HIGH	TLSv12	DH	GOST	GOST89	256	GOST89	9189	GOSTR341112_256_WITH_28147_CNT_IMIT,CNT-IMIT,IANA-GOST2012-GOST8912-GOST8912,GOST2012-GOST8912-GOST8912	GOSTR341112_256_WITH_28147_CNT_IMIT	-

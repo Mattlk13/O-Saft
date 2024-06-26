@@ -24,8 +24,8 @@ use strict;
 use warnings;
 use utf8;
 
-our $SID_ocfg   =  "@(#) OCfg.pm 3.28 24/05/28 12:00:10";
-$OCfg::VERSION  =  "24.01.24";  # official version number of this file
+our $SID_ocfg   =  "@(#) OCfg.pm 3.36 24/06/24 15:24:36";
+$OCfg::VERSION  =  "24.06.24";  # official version number of this file
 
 #_____________________________________________________________________________
 #___________________________________________________ package initialisation __|
@@ -2161,12 +2161,12 @@ our %cfg = (    # main data structure for configuration
                         0x0300009C .. 0x030000A7, 0x030000BA .. 0x030000C5,
                         0x0300C023 .. 0x0300C032, 0x0300C072 .. 0x0300C079,
                         0x0300CC13 .. 0x0300CC15, 0x0300D000 .. 0x0300D005,
-                        0x0300C100 .. 0x0300C102, 0x0300FFFF,
+                        0x0300C100 .. 0x0300C102, 0x030000FE, 0x0300FFFF,
                        ",
         'TLSv13'    =>          # constants for TLSv1.3 ciphers
                        "0x03001301 .. 0x03001305, 0x0300FF85, 0x0300FF87,
                         0x030000C6,   0x030000C7, 0x0300C0B4, 0x0300C0B5,
-                        0x0300C100 .. 0x0300C107,
+                        0x0300C100 .. 0x0300C107, 0x030000FE,
                        ",
                             # GREASE ciphers added in _cfg_init()
         'GREASE'    =>          # constants for GREASE ciphers
@@ -2273,8 +2273,9 @@ our %cfg = (    # main data structure for configuration
     'cmd-check'     => [],      # commands for +check, simply anything from %checks
     'cmd-sizes'     => [],      # commands for +sizes
     'cmd-quick'     => [        # commands for +quick
+                                # missing because rarely used: hasdtls1 and hasdtls13
                         qw(
-                         sslversion hassslv2 hassslv3 hastls12
+                         sslversion hassslv2 hassslv3 hastls12 hastls13 hasdtls12
                          cipher_selected cipher_strong cipher_null cipher_adh
                          cipher_exp cipher_cbc cipher_des cipher_rc4 cipher_edh
                          cipher_pfs beast crime drown freak heartbleed logjam
@@ -2301,7 +2302,7 @@ our %cfg = (    # main data structure for configuration
                          renegotiation resumption
                        )],
     'cmd-prots'     => [        # commands for checking protocols
-                        qw(hassslv2 hassslv3 hastls10 hastls11 hastls12 hastls13 hasalpn hasnpn session_protocol fallback_protocol alpn alpns npns next_protocols https_protocols http_protocols https_svc http_svc)
+                        qw(hassslv2 hassslv3 hastls10 hastls11 hastls12 hastls13 hasdtls1 hasdtls12 hasdtls13 hasalpn hasnpn session_protocol fallback_protocol alpn alpns npn npns next_protocols https_protocols http_protocols https_svc http_svc)
                        ],
     'cmd-NL'        => [        # commands which need NL when printed
                                 # they should be available with +info --v only
@@ -2378,8 +2379,13 @@ our %cfg = (    # main data structure for configuration
                          fingerprint fingerprint_hash fingerprint_md5
                          fingerprint_sha1 fingerprint_sha2
                          sigkey_value pubkey_value modulus
+                         subject_hash issuer_hash
+                         ocsp_public_hash ocsp_subject_hash
                          master_key session_id session_ticket
-                       )],      # fingerprint is special, see _ishexdata()
+                         ext_authorityid ext_subjectkeyid
+                       )],      # fingerprint, sigkey_value are special
+                                # no need to convert modulus_exponent, serial
+                                # because openssl returns integer and hex
    #------------------+---------+----------------------------------------------
 
     'ignore-out'    => [qw(https_body)],# commands (output) to be ignored, SEE Note:ignore-out
@@ -2848,7 +2854,6 @@ our %cfg = (    # main data structure for configuration
         'renegotiation' => "checks only if renegotiation is implemented server-side according RFC 5746 ",
         'drown'     => "checks only if the target server itself is vulnerable to DROWN ",
         'robot'     => "checks only if the target offers ciphers vulnerable to ROBOT ",
-        'cipher'    => "+cipher : functionality changed, please see '$cfg__me --help=TECHNIC'",
         'cipherall' => "+cipherall : functionality changed, please see '$cfg__me --help=TECHNIC'",
         'cipherraw' => "+cipherraw : functionality changed, please see '$cfg__me --help=TECHNIC'",
         'openssl3'  => "OpenSSL 3.x changed some functionality, please see '$cfg__me --help=TECHNIC'",
@@ -3335,6 +3340,7 @@ sub ocfg_sleep      {
 
 sub printhint       {
     #? Print hint for specified command.
+    # checks according cfg{out}->{hint*} must be done at caller
     my @args = @_;
     my $cmd  = shift @args;
     print $STR{HINT}, $cfg{'hints'}->{$cmd}, join(" ", @args) if (defined $cfg{'hints'}->{$cmd});
@@ -3415,7 +3421,8 @@ sub test_cipher_regex   {
 =   no    cipher does not supports PFS
 =   -     pseudo cipher
 = OWASP values:
-=   x     value A or B or C or D or -?- as returned by get_cipher_owasp()
+=   x     value A or B or C or D as returned by get_cipher_owasp()
+=   -?-   cypher not rated by OWASP
 =   miss  cipher not matched by any RegEx, programming error
 =   -     pseudo cipher
 = owasp values:
@@ -3545,7 +3552,7 @@ sub _init       {
         $data_oid{$k}->{val} = "<<check error>>"; # set a default value
     }
     $me = $cfg{'mename'}; $me =~ s/\s*$//;
-    set_user_agent("$me/3.28"); # default version; needs to be corrected by caller
+    set_user_agent("$me/3.36"); # default version; needs to be corrected by caller
     return;
 } # _init
 
@@ -3594,7 +3601,7 @@ lib/OData.pm
 
 =head1 VERSION
 
-3.28 2024/05/28
+3.36 2024/06/24
 
 =head1 AUTHOR
 

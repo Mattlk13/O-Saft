@@ -1,4 +1,4 @@
-#! /bin/sh
+#!/bin/sh
 #?
 #? File INSERTED_BY_MAKE_FROM
 #?
@@ -203,6 +203,8 @@
 #?                      - commands, see  DESCRIPTION  above
 #?      --force         - install  RC-FILEs  .o-saft.pl  and  .o-saft.tcl in
 #?                        $HOME, overwrites existing ones
+#?      --instdev       - copy also all files necessary for development into
+#?                        specified directory; implies --install
 #?      --no-colour     - do not use coloured texts; default
 #?      --colour        - use coloured texts (red, yellow, blue|green)
 #?      --colour-blind  - same as --colour
@@ -250,6 +252,7 @@
 #?      $0 /opt/bin/ --useenv
 #?      $0 /opt/bin/ --gnuenv
 #?      $0 --install /opt/bin/
+#?      $0 --install /tmp/dir/ --instdev
 #?      $0 --check   /opt/bin/
 #?      $0 --check   /opt/bin/ --colour
 #?      $0 --checkdev
@@ -292,7 +295,7 @@
 #?          awk, cat, perl, sed, tr, which, /bin/echo
 #?
 #? VERSION
-#?      @(#) ��P�%V 3.20 24/05/31 11:05:15
+#?      @(#) INSTALL-template.sh 3.22 24/06/22 10:09:06
 #?
 #? AUTHOR
 #?      16-sep-16 Achim Hoffmann
@@ -305,6 +308,7 @@ ich=${0##*/}
 dir=${0%/*}
 [ "$dir" = "$0" ] && dir="." # $0 found via $PATH in .
 src_directory="$dir"
+clean_directory=".files_to_be_removed"  # must be set after reading arguments
 _break=0                # 1 if screen width < 50; then use two lines as output
 colour=""               # 32 green, 34 blue for colour-blind
 useenv=0                # 1 to change shebang lines to /usr/bin/env
@@ -312,6 +316,7 @@ gnuenv=0                # 1 to change shebang lines to /usr/bin/env -S
 ignore=0                # 1 ignore errors, continue script instead of exit
 other=0
 force=0
+instdev=0;              # 1 install development files also
 optn=""
 optv=                   # 1 print verbose information
 optx=0
@@ -340,6 +345,8 @@ osaft_dock="INSERTED_BY_MAKE_OSAFT_DOCKER"
 doc_dir="INSERTED_BY_MAKE_DOC_DIR"
 lib_dir="INSERTED_BY_MAKE_LIB_DIR"
 usr_dir="INSERTED_BY_MAKE_USR_DIR"
+tst_dir="INSERTED_BY_MAKE_TST_DIR"
+log_dir="INSERTED_BY_MAKE_LOG_DIR"
 inst_directory=${OSAFT_DIR:="INSERTED_BY_MAKE_INSTALLDIR"} # use environment varaibale OSAFT_DIR if set
 perl_modules="INSERTED_BY_MAKE_PERL_MODULES"
 osaft_subdirs="INSERTED_BY_MAKE_OSAFT_DIRS"
@@ -363,6 +370,10 @@ files_install_cgi="
 
 files_install_doc="
 	INSERTED_BY_MAKE_OSAFT_DOC
+	"
+
+files_install_dev="
+	INSERTED_BY_MAKE_DEV_FILES
 	"
 
 tools_intern="
@@ -491,6 +502,17 @@ echo_red    () {
 	[ -z "$colour" ] && echo "$@" && return
 	\echo "\033[1;31m$@\033[0m"
 }
+echo_error  () {
+	# $1 number of errors
+	echo ""
+	echo -n "# checks$tab"
+	if [ $1 -eq 0 ]; then
+		echo_green "passed"
+	else
+		echo_red   "failed , $1 error(s) detected"
+	fi
+	return
+}
 
 check_pm    () {
 	# check if passed name is own perl module; return 0 if it is own module
@@ -514,6 +536,19 @@ check_commands () {
 		is=`\command -v $c`
 		[ -n "$is" ] && echo_green "$is" || echo_red "missing"
 	done
+	return
+}
+
+check_development () {
+	# $1 is -d -e -f or -L ; $2 is name of directory, file, link, ...
+	# use own label instead of echo_label
+	perl -le "printf'# %25s%c','$2',0x09"
+	if [ $1 "$2" ]; then
+		echo_green  "OK"
+	else 
+		echo_red "missing; install with: »$0 $inst_directory --instdev«"
+		err=`expr $err + 1`
+	fi
 	return
 }
 
@@ -588,6 +623,7 @@ while [ $# -gt 0 ]; do
 	  '--check-dev')        mode=checkdev;  ;;
 	  '--force')            force=1;        ;;
 	  '--other')            other=1;        ;;
+	  '--instdev')          instdev=1;      ;;
           '--no-colour')        colour="";      ;;
           '--colour')           colour="34m";   ;;
           '--colour-blind')     colour="34m";   ;;
@@ -607,7 +643,7 @@ while [ $# -gt 0 ]; do
 		\sed -ne '/^#? VERSION/{' -e n -e 's/#?//' -e p -e '}' $0
 		exit 0
 		;;
-	  '+VERSION')   echo 3.20 ; exit;        ;; # for compatibility to $osaft_exe
+	  '+VERSION')   echo 3.22 ; exit;        ;; # for compatibility to $osaft_exe
 	  *)            new_dir="$1"   ;        ;; # directory, last one wins
 	esac
 	shift
@@ -616,7 +652,7 @@ if [ -n "$new_dir" ]; then
 	inst_directory="$new_dir"
 	[ -z "$mode" ] && mode=install           # no mode given, set default
 fi
-clean_directory="$inst_directory/.files_to_be_removed"  # set on command line
+clean_directory="$inst_directory/$clean_directory"  # set on command line
 
 # --------------------------------------------- main
 
@@ -801,10 +837,28 @@ if [ "$mode" = "install" ]; then
 		echo "$inst_directory/$osaft_gui --rc > $inst_directory/$osaft_guirc"
 	fi
 
+	if [ $instdev -eq 1 ]; then
+		echo_info "installing $inst_directory ..."
+		$try \mkdir -p "$inst_directory/$tst_dir"
+		$try \ln  -s . "$inst_directory/$tst_dir"
+		for d in $doc_dir $lib_dir $usr_dir; do
+			$try \ln -s "../$d" "$inst_directory/$tst_dir/$d"
+		done
+		for f in $files_install_dev; do
+			echo_info "  cp    $src_directory/$f $inst_directory/"
+			$try \cp    "$src_directory/$f" "$inst_directory/$tst_dir" \
+			|| echo_red "**ERROR: 044: copying $f failed"
+		done
+		# correct wrong installed (needs to be adapted in Makefile)
+		for f in Makefile CHANGES README.md; do
+			$try \mv "$inst_directory/$tst_dir/$f" "$inst_directory/"
+		done
+	fi
+
 	if [ $force -eq 1 ]; then
 		echo_info 'installing RC-FILEs in $HOME ...'
 		for f in $inst_directory/$osaft_exerc $inst_directory/$osaft_exerc ; do
-			echo_info "  cp    $src_directory/$f $HOME/" \
+			echo_info "  cp    $src_directory/$f $HOME/"
 			$try   \cp "$src_directory/$f" "$HOME/" \
 			|| echo_red "**ERROR: 042: copying $f failed"
 		done
@@ -823,6 +877,23 @@ fi; # install mode }
 if [ "$mode" = "checkdev" ]; then
 	# does not use echo_info(), because text always printed
 	echo      "# check system for development usage ..."
+
+	echo_head "# check setup for development ..."
+	for f in Makefile CHANGES README.md; do
+		d="$inst_directory/$f"
+		check_development -f $d
+	done
+	d="$inst_directory/$tst_dir"
+	check_development -d $d
+	for d in $doc_dir $lib_dir $usr_dir; do
+		d="$inst_directory/$tst_dir/$d"
+		check_development -L $d
+	done
+	for f in $files_install_dev; do
+		d="$inst_directory/$f"  # $f already contains $tst_dir
+		check_development -f $d
+	done
+
 	echo_head "# check for tools used with/in make targets"
 	check_commands $tools_intern
 	check_commands $tools_extern
@@ -846,13 +917,15 @@ if [ "$mode" = "checkdev" ]; then
 	echo_foot
 	echo ""
 
-	[ $other -eq 0 ] && exit 0;
+	if [ $other -ne 0 ]; then
+		# printed with --other only
+		echo_head "# check for other SSL-related tools"
+		check_commands $tools_other
+		echo_foot
+	fi
 
-	# printed with --other only
-	echo_head "# check for other SSL-related tools"
-	check_commands $tools_other
-	echo_foot
-	exit 0
+	echo_error $err
+	exit $err
 fi; # checkdev mode }
 
 # ------------------------- check mode ----------- {
@@ -1094,14 +1167,8 @@ for c in $files_contrib $osaft_one ; do
 	#err=`expr $err + 1`    # not counted as error
 done
 echo_foot
+echo_error $err
 
-echo ""
-echo -n "# checks$tab"
-if [ $err -eq 0 ]; then
-	echo_green "passed"
-else
-	echo_red   "failed , $err error(s) detected"
-fi
 # more hints, if no installation directory was given; uses echo!
 [ -z "$new_dir" ] && echo "# default installation directory »$inst_directory« used"
 [ -z "$new_dir" ] && echo "# consider using »$0 path/to/directory« "

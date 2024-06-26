@@ -1,5 +1,5 @@
 
-# SID   @(#) help.txt 3.17 24/05/31 11:16:05
+# SID   @(#) help.txt 3.23 24/06/18 16:27:02
 
 NAME
 
@@ -1353,27 +1353,32 @@ OPTIONS
 
           * 'SSL'       can be any of:
             ssl, ssl2, ssl3, sslv2, sslv3, tls1, tls1, tls11, tls1.1, tls1-1,
-            tlsv1, tlsv11, tlsv1.1, tlsv1-1 (and similar variants for tlsv1.2).
+            tlsv1, tlsv11, tlsv1.1, tlsv1-1 (and similar variants for tlsv1.2
+            and tlsv1.3), dtls1, dtls12, dtls13.
           For example:  --tls1  --tlsv1  --tlsv1_1  are all the same.
 
           (--SSL variants):    Test ciphers for this SSL/TLS version.
           (--no-SSL variants): Don't test ciphers for this SSL/TLS version.
 
       --no-tcp
+      --no-tls
 
           Shortcut for:
           --no-sslv2 --no-sslv3 --no-tlsv1 --no-tlsv11 --no-tlsv12 --no-tlsv13
 
       --tcp
+      --tls
 
           Shortcut for:  --sslv2 --sslv3 --tlsv1 --tlsv11 --tlsv12 --tlsv13
 
       --no-udp
+      --no-dtls
 
           Shortcut for:
           --no-dtlsv09 --no-dtlsv1 --no-dtlsv11 --no-dtlsv12 --no-dtlsv13
 
       --udp
+      --dtls
 
           Shortcut for:  --dtlsv09 --dtlsv1 --dtlsv11 --dtlsv12 --dtlsv13
 
@@ -1540,7 +1545,7 @@ OPTIONS
       --cipher=CIPHER
 
           Only check for 'CIPHER' instead of using ciphers from internal list
-          (default). Multiple options are can be specified.
+          (default). Multiple options can be specified.
 
           'CIPHER' can be any cipher suite name or (internal) hex key, see:
 
@@ -1619,19 +1624,21 @@ OPTIONS
           Specify range of cipher constants to be tested with  +cipher  .
           Following 'RANGE's are supported:
           * 'rfc'             - all ciphers defined in various RFCs; default
-          * 'shifted'         - 'rfc', shifted by 64 bytes to the right
+          * 'shifted'         - 'rfc' + some shifted by 64 bytes to the right
+          * 'intern'          - 'rfc' + 'shifted'
           * 'long'            - like 'rfc' but more lazy list of constants
           * 'huge'            - all constants  0x03000000 .. 0x0300FFFF
           * 'safe'            - all constants  0x03000000 .. 0x032FFFFF
           * 'full'            - all constants  0x03000000 .. 0x03FFFFFF
           * 'SSLv2'           - all ciphers according RFC for SSLv2
-          * 'SSLv2_long'      - more lazy list of constants for SSLv2 ciphers
+          * 'SSLv2_long'      - more lazy list of constants for SSLv2
           * 'SSLv3'           - all ciphers according RFC for SSLv3
           * 'SSLv3_SSLv2'     - all ciphers for SSLv3 with SSLv2
           * 'TLSv12'          - all ciphers according RFC for TLSv12
           * 'TLSv13'          - all ciphers according RFC for TLSv13
-          * 'c0xx'            - constants for ciphers using ECC 0x0300C000 .. 0x0300C0FF
-          * 'ccxx'            - constants for ciphers using ECC 0x0300CC00 .. 0x0300CCFF
+          * 'GREASE'          - all GREASE ciphers according RFC
+          * 'c0xx'            - ECC ciphers, constants 0x0300C000 .. 0x0300C0FF
+          * 'ccxx'            - ECC ciphers, constants 0x0300CC00 .. 0x0300CCFF
           * 'ecc'             - all constants for ciphers using ECC
 
           Note: 'SSLv2' is the internal list used for testing SSLv2 ciphers.
@@ -2136,14 +2143,11 @@ OPTIONS
 
           Note that  --v  is different from  -v  (see above).
 
-# following option still there, but behaves like --v since 24.01.24
-#
-#      --v-cipher --cipher-v
-#
-#          Print remotely checked ciphers.
-#          In contrast to  --v --v  above,  this just prints the ciphers while
-#          being checked, but no other verbose messages.
-#
+      --v-cipher
+      --cipher-v
+
+          Print each cipher being checked (with  --ciphermode=openssl  only).
+
 # following no longer implemented (8/2016, 12/2023)
 #
 #      --v --v
@@ -2259,6 +2263,11 @@ OPTIONS
 
           Supress printing of warning messages with number NNN (**WARNING:).
           Mainly used for internal testing.
+
+      --quiet
+      --silent
+
+          Shortcut for:  --no-warning --no-hint .
 
       --exit=KEY
 
@@ -4285,17 +4294,17 @@ ABOUT CGI
           ** Opt        - quick options menu
           ** Help       - various help pages
 
-        * input field for a target (hostname or URL)
+        * input field "Host[:Port]" for a target (hostname or URL)
 
         * GUI sections
           ** Simple GUI - simple form with most common commands and options
                           Each provided +command buttons submit the form with
                           the selected options and the clicked command.
 
-          ** Full GUI Commands & Options
-                        - form with all commands and options,  its content is
-                          The same as the  COMMANDS  and  OPTIONS  section of
-                          the complete help page (see  --help  ).
+          ** Full GUI Commands & Options - form with all commands and options
+                          Its content is the same as in sections  COMMANDS  
+                          and  OPTIONS  of the complete help page (see --help
+                          option or "☰ -> ? Help" in top menu bar).
 
         In both GUI sections following buttons exist:
 
@@ -4303,7 +4312,7 @@ ABOUT CGI
         * start         - submit form with selected command and options
 
         In general, command buttons which submit the form are yellow. Buttons
-        which show some help, mainly in a new browser tab, are gray.
+        which show some help, mainly in a new browser tab, are grey.
 
     CGI-form limitations
 
@@ -4328,8 +4337,9 @@ ABOUT CGI
 
         * Use of dangerous commands or options.
 
-        For deatils pleasesee
+        For deatils please see
 
+              $0 --help=ABOUT
               perldoc o-saft.cgi
 
 
@@ -4730,6 +4740,18 @@ EXAMPLES
 
         * Test for a specific ciphers
           $0 +cipher --cipher=ADH-AES256-SHA some.tld
+
+        * Test for DTLS ciphers only
+          $0 +cipher --no-tls
+
+        * Test for SSL/TLS ciphers only
+          $0 +cipher --no-dtls
+
+        * Test for TLSv1.3 ciphers only
+          $0 +cipher --no-tls --no-dtls --tlsv13
+
+        * Consequently following tests no ciphers at all
+          $0 +cipher --no-tls --no-dtls
 
         * Test using a private libssl.so, libcrypto.so and openssl
           $0 +cipher --lib=/foo/bar-1.42 --exe=/foo/bar-1.42/apps some.tld
