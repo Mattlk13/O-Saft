@@ -1,5 +1,5 @@
 
-# SID	@(#) glossary.txt 3.12 26/02/24 17:57:38
+# SID	@(#) glossary.txt 3.13 26/04/22 13:50:26
 
 # acronym | description
 #------+----------------------------------------------------------------------+
@@ -50,6 +50,7 @@ AKW1	A Key Wrap Scheme
 AKW2	A Key Wrap Scheme
 AKC	Agreement with Key Confirmation
 AKID	Authority Key IDentifier
+ALM	Application-Layer Multicast
 ALPN	Application Layer Protocol Negotiation
 ALPACA	Application Layer and Content Confusion Attack	(Exploit SSL/TLS)
 AMAC	ANSI Retail MAC
@@ -64,6 +65,7 @@ Argon2i	variant of Argon2
 Argon2id	variant of Argon2
 ARIA	128-bit symmetric block cipher
 ARX	add–rotate–xor
+ASM	Any-Source Multicast
 ASN	Autonomous System Number
 ASN.1	Abstract Syntax Notation number One
 AtE	Authenticate-then-Encrypt (see also MtE)
@@ -172,6 +174,7 @@ CRYPTREC	Cryptography Research and Evaluation Committees
 CRYSTALS	post-quantum hash function, signature
 CRYSTALS-Dilithium	is now ML-DSA
 CRYSTALS-Kyber	is now ML-KEM
+cSHAKE	??
 CSP	Certificate Service Provider
 CSP 	Cryptographic Service Provider
 CSP  	Critical Security Parameter (used in FIPS 140-2)
@@ -208,6 +211,7 @@ DESX	extended DES
 D5	Verhoeff's Dihedral Group D5 Check
 DH	Diffie-Hellman
 DHE	Diffie-Hellman ephemeral (historic acronym, often used, mainly in openssl)
+DHT	Distributed Hash Table
 Dilithium	digital signature scheme
 Dilithium2-AES	alias for Dilithium
 Dilithium3-AES	alias for Dilithium
@@ -265,6 +269,7 @@ ECDSA-256	Elliptic Curve Digital Signature Algorithm (256 bits)
 ECDSA-384	Elliptic Curve Digital Signature Algorithm (384 bits)
 ECDSA-521	Elliptic Curve Digital Signature Algorithm (521 bits)
 ECGDSA	alias for EC-GDSA
+ECH	Encrypted Client Hello
 ECHO	hash function (Ryad Benadjila, Olivier Billet, Henri Gilbert, Gilles Macario-Rat, Thomas Peyrin, Matt Robshaw, Yannick Seurin, 2010)
 ECIES	Elliptic Curve Integrated Encryption Scheme
 ECKA	Elliptic Curve Key Agreement
@@ -304,6 +309,7 @@ EME-OAEP 	Encoding Method for Encryption Optimal Asymmetric Encryption Padding
 EMS 	Extended Master Secret (sometimes)
 EMS 	Encrypted Master Secret
 ESNI	Encrypted Server Name Indication
+ESM	End-System Multicast
 ESP	Encapsulating Security Payload
 ESSIV	Encrypted salt-sector initialization vector
 EtA	Encrypt-then-Authenticate (see also EtM)
@@ -321,6 +327,7 @@ FDH	Full Domain Hash
 FHE	Fully Homomorphic Encryption
 FEAL	Fast Data Encryption Algorithm
 FFC	Finite Field Cryptography
+FFDHE	Finite Field Diffie-Hellman Ephemeral
 FFT	Fast Fourier Transform
 FIPS	Federal Information Processing Standard
 FIPS46-2	FIPS Data Encryption Standard (DES)
@@ -387,6 +394,7 @@ HNF-256	hash function (Harshvardhan Tiwari, Krishna Asawa, 2014)
 HMAC	keyed-Hash Message Authentication Code (aka Hashed MAC)
 HMQV	h? Menezes-Qu-Vanstone
 HPC	Hasty Putting Cipher
+HPKE	Hybrid Public Key Encryption
 HPKP	HTTP Public Key Pinning
 HPolyC	ChaCha stream cipher with Poly1305 and XChaCha12, XChaCha20
 HRSS	encryption algorithm
@@ -540,6 +548,7 @@ OCSP stapling	formerly known as: TLS Certificate Status Request
 OFB	Output Feedback
 OFBx	Output Feedback x bit mode
 OID	Object Identifier
+OM	Overlay Multicast
 OMAC	One-Key CMAC (aka CBC-MAC)
 OMAC1	same as CMAC
 OMAC2	same as OMAC
@@ -601,6 +610,7 @@ PMS	Pre-Master Secret
 POLYVAL	(polynomial used in GCM)
 Poly1305	Authenticator (MAC)
 Poly1305-AES	MAC (by D. Bernstein)
+POM	Proxied Overlay Multicat
 POP	Proof of Possession
 POODLE	Padding Oracle On Downgraded Legacy Encryption	(Exploit SSL/TLS)
 POR	Proofs Of Retrievability
@@ -645,6 +655,7 @@ RC5-64	Rivest Cipher 5, 64-bit symmetric block cipher
 RC6	Rivest Cipher 6, 128-bit symmetric block cipher
 RCSU	Reuters' Compression Scheme for Unicode (aka SCSU)
 RDSA	Russian Digital Signature Algorithm (aka GOST 34.10, RFC 7091)
+RELOAD	Application-Layer Multicast Extensions to REsource LOcation And Discovery
 RFC	Request for Comments
 Rijndael	symmetric block cipher (AES)
 RIPEMD	RACE Integrity Primitives Evaluation Message Digest
@@ -807,6 +818,7 @@ SSK	Secret Signing Key
 SSL	Secure Sockets Layer
 SSLv2	Secure Sockets Layer Version 2
 SSLv3	Secure Sockets Layer Version 3
+sSM	Source-Specific Multicast
 SSP	Security Support Provider
 SSPI	Security Support Provider Interface
 SST	Serialized Certificate Store format
